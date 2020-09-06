@@ -195,7 +195,7 @@ play % PUBLICATION {{-
 ->
     ArticleNumberString =
         futil:pipe
-          ([ content:pick(children, CurrentContent)
+          ([ publication_guide:pick(children, CurrentContent)
            , fun erlang:length/1
            , fun erlang:integer_to_list/1
            ]),
@@ -223,7 +223,7 @@ play % PUBLICATION_HELP {{-
 ->
     ArticleNumber =
         futil:pipe
-          ([ content:pick(children, CurrentContent)
+          ([ publication_guide:pick(children, CurrentContent)
            , fun erlang:length/1
            ]),
 
@@ -842,7 +842,7 @@ title(Vertex) ->
 play_selections(Vertex, Data) ->
     PlaybackFunctions =
         [  (futil:curry(fun do_play_selection/2))(Child)
-        || Child <- content:pick(children, Vertex)
+        || Child <- publication_guide:pick(children, Vertex)
         ],
 
     futil:pipe
@@ -1112,7 +1112,7 @@ do_check  % {{-
 ->
 
     Label =
-        content:get_label(Vertex),
+        publication_guide:get_label(Vertex),
 
     {SavedText, LabelMap} =
         case Label =:= [] of
@@ -1156,7 +1156,7 @@ do_check  % {{-
             % google_TTS_to_wav(Text, FileBasename, PromptSpeed),
             TTSEngine({Text, AudioFilename, PromptSpeed}),
             % 2. save the text to vertex label
-            content:add_label(Vertex, LabelMap#{ LabelKey => Text })
+            publication_guide:add_label(Vertex, LabelMap#{ LabelKey => Text })
     end,
 
     AudioFilename.
@@ -1181,7 +1181,7 @@ get_audiofilename(ID, FileBasename, Speed) -> % {{-
 % }}-
 pick_title(Direction, ContentItem) ->
     MaybeItem =
-        content:pick(Direction, ContentItem),
+        publication_guide:pick(Direction, ContentItem),
     case MaybeItem of
         [] ->
             "";

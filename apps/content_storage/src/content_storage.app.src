@@ -1,0 +1,24 @@
+{ application
+, content_storage
+, [ { description
+    , "Stateless library for  abstracting out the"
+      "storage  layer for  the  content graph  in"
+      "`publication_guide`"
+    }
+  , {vsn, "0.1.0"}
+  , {registered, []}
+
+  , { applications
+    , [ kernel
+      , stdlib
+      % To be able to refer to type specs defined there for `-callback`s
+      , publication_guide
+      ]
+    }
+
+  , {env,[]}
+  , {modules, []}
+  , {licenses, ["Apache 2.0"]}
+  , {links, []}
+  ]
+}.

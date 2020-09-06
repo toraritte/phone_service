@@ -1,9 +1,5 @@
 -module(content).
 -behaviour(gen_server).
-% -define(CONTENT_ROOT_DIR, "/home/toraritte/clones/phone-service/content-root/").
--define(PUBLICATION_ROOT, "/home/toraritte/clones/phone-service/publications/").
--define(PWD, file:get_cwd()).
-% -define(CONTENT_ROOT, {category, 0, "Main category"}).
 
 -export(
     [ start_link/0
@@ -30,14 +26,18 @@
     % , realize/0
     , get_vertex/3
     , process_call/3
-    % , get_meta/1
+    % , get_vertex_data/1
     % , current/1
     % , update_history/2
     ]).
 
+% This belongs to a content_storage API implementation
+% -define(PUBLICATIONS_DIR, lofa(phone_service, publications_dir)).
+-define(PUBLICATION_GUIDE, application:get_env(phone_service, publication_guide, [])).
+
+
 start_link() ->
     % {ok, Pid} =
-    logger:notice(#{ pwd => ?PWD, pwd_from_start_link => file:get_cwd() }),
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 % ,   Pid.
 
@@ -45,21 +45,39 @@ start_link() ->
 %% gen_server callbacks
 %% ====================================================================
 
+% lofa(Application, Par) ->
+%     {ok, Val} =
+%     application:get_env(Application, Par),
+%     Val.
+
 init(_Args) -> % {{-
     % TODO PROD How to set up the graph? ("do not overthink" notes below) {{-
     % It `realize/0`s the dir structure at the moment if it does not exit, but in subsequent phases the graph will be based on a remote cloud storage - it is cheap to redraw the entire graph by reading local files, but that will not cut it later. The graph will need to be de-serialized and kept up to date via messages, then saved to disk on startup.
     % }}-
 
-    % There is no subtle diffing algorithm: when the content menu structure changes, recreate the entire directory hierarchy.
-    % os:cmd("rm -r " ++ ?CONTENT_ROOT_DIR),
-    % realize(?CONTENT_ROOT_DIR),
+    % TODO This should go to storage_api (and also rewrite because this is not valid)
+    % PublicationGuide =
+    %     case content_storage_api:list() of
+    %         [] ->
+    %             % how this  is "realized" will depend  on the backend.
+    %             % local fs might as well just create the dir structure
+    %             % as  it is  fast  and  low "cost",  but  for a  cloud
+    %             % storage it  would be a  huge load, so  probably only
+    %             % create paths  that have actuals files  to upload and
+    %             % just  save the  `publication_guide`  as a  blueprint
+    %             % (and keep it up to date).
+    %             content_storage:realize(?PUBLICATION_GUIDE),
+    %             ?PUBLICATION_GUIDE;
+    %         ContentList ->
+    %             ContentList
+    %     end,
 
-
-    % ContentRootDir =
-    %     filename:join(?CONTENT_ROOT_DIR, "00"),
     Graph =
-        draw_content_graph(),
-        % draw_content_graph({from_dir, ContentRootDir}),
+        futil:pipe(
+          [ content_storage_api:list()
+          , draw_content_graph/1
+          ]),
+        % draw_content_graph(PublicationGuide),
 
     {ok, Graph}.
 % }}-
@@ -169,9 +187,9 @@ all_vertices() ->
 %      publication guide, is to to
 %
 %      1. Move old `publications` directory
-%      2. `content:redraw()`
+%      2. `publication_guide:redraw()`
 %      3. Place files in the desired publications
-%      4. `content:redraw()`
+%      4. `publication_guide:redraw()`
 redraw() ->
     gen_server:cast(?MODULE, redraw).
 
@@ -193,31 +211,37 @@ get_label(Vertex) ->
 
 % TODO Depends on the internal representation.
 %      Refactor when the web service is ready (or usable).
-draw_content_graph() ->
+draw_content_graph([]) ->
+    digraph:new([cyclic, protected]); % default values made explicit
 
-    % Doesn't throw so if exists  then things will just go
-    % on.
-    % Read TODO at `redraw/0`
-    file:make_dir(?PUBLICATION_ROOT),
+draw_content_graph(PublicationGuide) ->
 
-    [ { { category, _ } = RootContentItem
-      , [_|_] = MainMenuItems
-      }
-    ] =
-        publication_guide(),
+    % { RootContentItem
+    % , [_|_] = RootItems
+    % } =
+    #{ sub_items := RootItems } = PublicationGuide,
 
-    ContentRoot =
-        make_meta(RootContentItem, 0),
+    % NOTE Vertex = Data
+    % The way  directect graphs are implemented  in Erlang
+    % means  that the  actual data  structure a  vertex is
+    % created will become the vertex itself. (Vertices can
+    % hold additional info in labels.)
+    % Just wanted to make the distinction that even though
+    % content-wise the two variable holds identical data.
+    RootVertex = RootVertexData =
+        to_vertex_data(PublicationGuide, 0),
 
     FirstRunGraph =
         digraph:new([cyclic, protected]), % default values made explicit
 
-    digraph:add_vertex(FirstRunGraph, ContentRoot),
+    digraph:add_vertex(FirstRunGraph, RootVertexData),
+
+    First = #{ selection => -1 },
 
     do_draw
-      ( [first|MainMenuItems]
+      ( [First|RootItems]
       , FirstRunGraph
-      , ContentRoot
+      , RootVertex
       ),
 
     % NOTE Linking hack % {{-
@@ -228,38 +252,38 @@ draw_content_graph() ->
     % created yet.  On the second run,  which is basically
     % `refresh_content_graph/1`, the dir  should be there,
     % and linking will take effect.
-    % 
+    %
     % The  elegant  solution would  have  been  to send  a
     % `redraw` message  at the  end of `init/0`  (to allow
     % the process  to finish  starting) but this  setup is
     % more than likely to be temporary anyway.
-    % 
+    %
     % LINKING FAIL:
     % If there  is none, or  more than one,  a "link_fail"
     % directory is created; this will be deleted after the
     % first  run, but  if  there is  still  one after  the
     % second one, it  means that the `publication_guide/0`
-    % will need to be amended.
+    % does have an erroneous entry.
     % }}-
     digraph:delete(FirstRunGraph),
     file:del_dir("link_fail"),
     SecondRunGraph =
         digraph:new([cyclic, protected]),
-    digraph:add_vertex(SecondRunGraph, ContentRoot),
+    digraph:add_vertex(SecondRunGraph, RootVertexData),
     do_draw
-      ( [first|MainMenuItems]
+      ( [First|RootItems]
       , SecondRunGraph
-      , ContentRoot
+      , RootVertex
       ),
 
     SecondRunGraph.
 
-% TODO Don't think this is possible
-do_draw([], _Graph, _ParentVertex) ->
-    done;
+% TODO Don't think this is possible; commenting out to see
+% do_draw([], _Graph, _ParentVertex) ->
+%     done;
 
-% Empty publications end condition
-do_draw([first], _Graph, ParentVertex) ->
+% Empty item's end condition
+do_draw([#{ selection => -1 }], _Graph, _ParentVertex) ->
 %     erlang:display([done, [first], ParentVertex]),
     done;
 
@@ -276,256 +300,61 @@ do_draw  % ContentType, [ PrevItemVertex ] {{-
 
 % }}-
 
-do_draw  % article, [          first, ItemVertex | []    = Rest ]      {{-
-( [ first
-  , #{ type := article} = ItemVertex
-  | [] = _Rest
-  ]
-, Graph
-, ParentVertex
-)
-->
-    draw_article
-      ( first_and_last
-      , Graph
-      , ParentVertex
-      , ItemVertex
-      , [] % Rest
-      );
-
-% }}-
-do_draw  % article, [          first, ItemVertex | [_|_] = Rest ]      {{-
-( [ first
-  , #{ type := article} = ItemVertex
-  | [_|_] = Rest
-  ]
-, Graph
-, ParentVertex
-)
-->
-    draw_article
-      ( first
-      , Graph
-      , ParentVertex
-      , ItemVertex
-      , Rest
-      );
-
-% }}-
-do_draw  % article, [ PrevItemVertex, ItemVertex | []    = Rest ]      {{-
-( [ #{ type := article} = PrevItemVertex
-  , #{ type := article} = ItemVertex
-  | [] = _Rest
-  ]
-, Graph
-, ParentVertex
-)
-->
-    draw_article
-      ( {PrevItemVertex, last}
-      , Graph
-      , ParentVertex
-      , ItemVertex
-      , [] % Rest
-      );
-
-% }}-
-do_draw  % article, [ PrevItemVertex, ItemVertex | [_|_] = Rest ]      {{-
-( [ #{ type := article} = PrevItemVertex
-  , #{ type := article} = ItemVertex
-  | [_|_] = Rest
-  ]
-, Graph
-, ParentVertex
-)
-->
-    draw_article
-      ( PrevItemVertex
-      , Graph
-      , ParentVertex
-      , ItemVertex
-      , Rest
-      );
-% }}-
-
 do_draw  % content_with_subitems, [          first, ContentItem | []    = Rest ] {{-
-( [ first
-  , { ContentItem, SubItems }
-  | [] = _RestContentItemWithSubItems
+( [ #{ selection := Selection } = PrevItemVertex
+  , #{} = ContentItem % May be a leaf item, hence no match on `sub_items`
+  | RestContentItems
   ]
 , Graph
 , ParentVertex
 )
 % Would be nice for Erlang to have Haskell-like type system and then this guard would be unnecessary (as { A, [_|_] } then wouldn't mean both {A, "lofa"} and {A, [{a,b}, {c, d}]}...)
-when is_tuple(ContentItem)
+% when is_tuple(ContentItem)
+when is_integer(Selection)
 ->
-    draw_content_with_subitems
-      ( first_and_last
-      , Graph
-      , ParentVertex
-      , ContentItem
-      , 1
-      , SubItems
-      , []
-      );
+    { Direction, ItemNumber } =
+        case
+            { Selection
+            , RestContentItems
+            }
+        of
+            { -1, []    } -> { first_and_last,         1             };
+            { -1, [_|_] } -> { first,                  1             };
+            { _,  []    } -> { {PrevItemVertex, last}, Selection + 1 };
+            { _,  [_|_] } -> { PrevItemVertex,         Selection + 1 }
+        end,
 
-% }}-
-do_draw  % content_with_subitems, [          first, ContentItem | [_|_] = Rest ] {{-
-( [ first
-  , { ContentItem, SubItems }
-  | [_|_] = RestContenItemWithSubItems
-  ]
-, Graph
-, ParentVertex
-)
-when is_tuple(ContentItem)
-->
-    draw_content_with_subitems
-      ( first
-      , Graph
-      , ParentVertex
-      , ContentItem
-      , 1
-      , SubItems
-      , RestContenItemWithSubItems
-      );
+    % If `ContentItem`  did not have `sub_items`,  it will
+    % now  have  one  with  an empty  list,  but  keep  it
+    % otherwise.
+    SubItemizedContentItem =
+        maps:merge
+          ( #{ sub_items => [] }
+          , ContentItem
+          ),
 
-% }}-
-do_draw  % content_with_subitems, [ PrevItemVertex, ContentItem | []    = Rest ] {{-
-( [ #{ selection := ItemNumber } = PrevItemVertex
-  , { ContentItem, SubItems }
-  | [] = _RestContentItemWithSubItems
-  ]
-, Graph
-, ParentVertex
-)
-when is_tuple(ContentItem)
-->
-    draw_content_with_subitems
-      ( {PrevItemVertex, last}
+    draw_item
+      ( Direction
       , Graph
       , ParentVertex
-      , ContentItem
-      , ItemNumber + 1
-      , SubItems
-      , []
-      );
-
-% }}-
-do_draw  % content_with_subitems, [ PrevItemVertex, ContentItem | [_|_] = Rest ] {{-
-( [ #{ selection := ItemNumber } = PrevItemVertex
-  , { ContentItem, SubItems }
-  | [_|_] = RestContenItemWithSubItems
-  ]
-, Graph
-, ParentVertex
-)
-when is_tuple(ContentItem)
-->
-    draw_content_with_subitems
-      ( PrevItemVertex
-      , Graph
-      , ParentVertex
-      , ContentItem
-      , ItemNumber + 1
-      , SubItems
-      , RestContenItemWithSubItems
-      );
-% }}-
-
-% NOTE `leaf_item`s
-%      More like "pseudo-leaf" because these will appear as
-%      leaves  in  the  `publication_guide/0`  but  article
-%      recordings read by the  directories will be the real
-%      end vertices. (Unless they  have no recordings, then
-%      they are truly leaves.)
-do_draw  % leaf_item, [          first, ContentItem | []    = Rest ] {{-
-( [ first
-  , LeafContentItem
-  | [] = _Rest
-  ]
-, Graph
-, ParentVertex
-)
-->
-    draw_leaf_item
-      ( first_and_last
-      , Graph
-      , ParentVertex
-      , LeafContentItem
-      , 1
-      , [] % Rest
-      );
-
-% }}-
-do_draw  % leaf_item, [          first, ContentItem | [_|_] = Rest ] {{-
-( [ first
-  , LeafContentItem
-  | [_|_] = Rest
-  ]
-, Graph
-, ParentVertex
-)
-->
-    draw_leaf_item
-      ( first
-      , Graph
-      , ParentVertex
-      , LeafContentItem
-      , 1
-      , Rest
-      );
-
-% }}-
-do_draw  % leaf_item, [ PrevItemVertex, ContentItem | []    = Rest ] {{-
-( [ #{ selection := ItemNumber } = PrevItemVertex
-  , LeafContentItem
-  | [] = _Rest
-  ]
-, Graph
-, ParentVertex
-)
-->
-    draw_leaf_item
-      ( {PrevItemVertex, last}
-      , Graph
-      , ParentVertex
-      , LeafContentItem
-      , ItemNumber + 1
-      , [] % Rest
-      );
-
-% }}-
-do_draw  % leaf_item, [ PrevItemVertex, ContentItem | [_|_] = Rest ] {{-
-( [ #{ selection := ItemNumber } = PrevItemVertex
-  , LeafContentItem
-  | [_|_] = Rest
-  ]
-, Graph
-, ParentVertex
-)
-->
-    draw_leaf_item
-      ( PrevItemVertex
-      , Graph
-      , ParentVertex
-      , LeafContentItem
-      , ItemNumber + 1
-      , Rest
+      , SubItemizedContentItem
+      , ItemNumber
+      , RestContentItems
       ).
+
 % }}-
 
 refresh_content_graph(Graph) ->
     digraph:delete(Graph),
     init(ignore).
 
-% `EdgeNote` and not `EdgeLabel` because that is already taken for `digraph:add_edge/5`
-add_edge(Graph, EdgeNote, FromVertex, ToVertex) ->
+add_content_edge(Graph, Direction, FromVertex, ToVertex) ->
     % `digraph` is just 3 ETS tables, and so edges need to be unique, hence the `erlang:system_time/0`. The `Counter` in the tuple is to make temporal ordering absolutely possible (e.g., `first` and `last` edges) because `erlang:system_time/0` values are not **strictly** monotonically increasing values (that is, calling it fast enough may result in the same value, but not lower).
     digraph:add_edge(
       Graph,                 % digraph
-      { EdgeNote             % |
-      % the UU(ish)ID is needed (e.g., 2 siblings will have the same {parent, ...} edge)
+      { Direction            % |
+      % the UU(ish)ID is needed (e.g., when 2 siblings will have the same {parent, ...} edge)
+      % TODO replace with real UUID
       , erlang:system_time() % | edge
       , ToVertex             % |
       },                     % |
@@ -535,8 +364,8 @@ add_edge(Graph, EdgeNote, FromVertex, ToVertex) ->
     ).
 
 add_hierarchy_edges(Graph, ParentVertex, ChildVertex) -> % {{-
-    add_edge(Graph, child,  ParentVertex, ChildVertex),
-    add_edge(Graph, parent, ChildVertex, ParentVertex).
+    add_content_edge(Graph, child,  ParentVertex, ChildVertex),
+    add_content_edge(Graph, parent, ChildVertex, ParentVertex).
 % }}-
 
 % Graph -> Direction -> List Vertex
@@ -585,7 +414,7 @@ get_vertex(Graph, Vertex, Direction) ->
 % TODO make this explicit (i.e., dir_prefix, dir, title)
 % Only 2 places need to be amended, by simply a matching for tuples
 % + `make_title_dir/1`
-% + `make_meta/2`
+% + `to_vertex_data/2`
 % Maybe add both forms
 % TODO FAVORITES
 % Linking can now be used to add publications to your favorites!
@@ -597,14 +426,14 @@ publication_guide() -> % {{-
             , { "Store sales advertising"
               , [ {dir_prefix, "ads"} ]
               }
-            } 
+            }
           , [ { { category % grocery stores % {{-
                 , { "Grocery stores"
                   , [ {dir_prefix, "grocery"} ]
                   }
                 }
               , [ { { sectioned_publication
-                    , { "Safeway" 
+                    , { "Safeway"
                       , [ {dir_prefix, "safeway"} ]
                       }
                     }
@@ -632,7 +461,7 @@ publication_guide() -> % {{-
                 ]
               } % }}-
             , { { category % discount stores {{-
-                , { "Discount stores" 
+                , { "Discount stores"
                   , [ {dir_prefix, "discount"} ]
                   }
                 }
@@ -707,10 +536,10 @@ publication_guide() -> % {{-
                 ]
               } % }}-
             , { { category  % sf and bay area {{-
-                , { "San Francisco and Bay Area newspapers" 
+                , { "San Francisco and Bay Area newspapers"
                   , [ {dir_prefix, "bay-area"} ]
                   }
-                } 
+                }
               , [ {publication, {"Vallejo Times Herald",       [{ alt, "vallejo-times-herald"      }]}}
                 , {publication, {"Santa Rosa Press Democrat",  [{ alt, "santa-rosa-press-democrat" }]}}
                 , {publication, {"SF Gate",                    [{ alt, "sf-gate"                   }]}}
@@ -721,7 +550,7 @@ publication_guide() -> % {{-
                 ]
               } % }}-
             , { { category % central california {{-
-                , { "Central California newspapers" 
+                , { "Central California newspapers"
                   , [ {dir_prefix, "central-cal"} ]
                   }
               }
@@ -730,7 +559,7 @@ publication_guide() -> % {{-
                 ]
               } % }}-
             , { { category % mendocino {{-
-                , { "Mendocino county newspapers" 
+                , { "Mendocino county newspapers"
                   , [ {dir_prefix, "mendocino"} ]
                   }
               }
@@ -739,7 +568,7 @@ publication_guide() -> % {{-
                 ]
               } % }}-
             , { { category % humboldt and trinity counties {{-
-                , { "Humboldt & Trinity county newspapers" 
+                , { "Humboldt & Trinity county newspapers"
                   , [ {dir_prefix, "humboldt-trinity"} ]
                   }
               }
@@ -753,7 +582,7 @@ publication_guide() -> % {{-
             ]
           } % }}-
         , { { category % popular magazines {{-
-            , { "Popular magazines" 
+            , { "Popular magazines"
               , [ {dir_prefix, "pop"} ]
               }
             }
@@ -769,7 +598,7 @@ publication_guide() -> % {{-
             ]
           } % }}-
         , { { category % old time radio {{-
-            , { "Old Time Radio Theater" 
+            , { "Old Time Radio Theater"
               , [ {dir_prefix, "OTR"} ]
               }
             }
@@ -821,7 +650,7 @@ publication_guide() -> % {{-
             ]
           } % }}-
         , { { category % games{{-
-            , { "Games" 
+            , { "Games"
               , [ {dir_prefix, "games"} ]
               }
             }
@@ -830,7 +659,7 @@ publication_guide() -> % {{-
             ]
           } % }}-
         , { { category % community {{-
-            , { "Community information and resources" 
+            , { "Community information and resources"
               , [ {dir_prefix, "community-resources"} ]
               }
             }
@@ -853,12 +682,12 @@ publication_guide() -> % {{-
             ]
           } % }}-
         , { { category % blindness resources {{-
-            , { "Blindness information and resources" 
+            , { "Blindness information and resources"
               , [ {dir_prefix, "blindness-resources"} ]
               }
             }
           , [ { { category % organizations {{-
-                , { "Organizations" 
+                , { "Organizations"
                   , [ {dir_prefix, "orgs"} ]
                   }
                 }
@@ -890,7 +719,7 @@ publication_guide() -> % {{-
             ]
           } % }}-
         , { { category  % education and resources {{-
-            , { "Education and resources" 
+            , { "Education and resources"
               , [ {dir_prefix, "edu"} ]
               }
             }
@@ -913,6 +742,297 @@ publication_guide() -> % {{-
     ].
 % }}-
 
+% TODO linking is the concern of `content_storage`
+% Links are based  on title; if two title  is the same
+% then (1) one should either be a link or (2) that's a
+% mistake.
+% The format  is {link, Title} -  anything else will
+% be interpreted as error.
+% + linking is also expanded on the storage_api level
+% TODO linear queries? use digraph's ETS tables
+publication_guide() -> % {{-
+    % NOTE
+    % {path, ...} meta  only matters to `content_storage`,
+    % and it  should be re-produced  with `list`/`export`.
+    % For  example,  without  the  path  meta  tuple,  the
+    % path  will be  the title  converted to  [a-z0-9] and
+    % `-`  replacing  spaces,  but using  the  path  value
+    % otherwise. To  reproduce: if  the current  path part
+    % does not match  the reduced title then  use the path
+    % part verbatim in  a path tuple added  to the content
+    % item.
+    % /main/... =/= "main-menu" -> add {path, "main"}
+    % (or, just check "path" in the "meta" proplist)
+    #{ type => category
+       , title => "Main menu"
+       , path => "main"
+       , sub_items =>
+     }
+    , [ { #{ type => category, title => "Store sales advertising", path => "ads"}
+          , [ { { category,  [{title, "Grocery stores"}]  }
+                , [ { { publication, "Safeway" }
+                      , [ {section,  "Week 7/15/2020 to 7/21/2020", [{path, "week-29"}] }
+                        ]
+                    }
+                    , { publication, "Raley's" }
+                    , { publication, "La Superior" }
+                    , { publication, "Food Source" }
+                    , { publication, "Savemart" }
+                    , { publication, "Foods Co" }
+                    , { publication, "Trader Joe's" }
+                    , { publication, "Sprouts" }
+                    , { publication, "Lucky Supermarkets" }
+                  ]
+              }
+              , { { category, "Drug stores" }
+                  , [ {publication, "CVS"}
+                      , { publication, "Rite Aid" }
+                      , { publication, "Walgreen's" }
+                    ]
+                }
+              , { { category, "Discount stores" }
+                  , [ {publication, "Target"}
+                      , {publication, "Walmart"}
+                    ]
+                }
+            ]
+        }
+        , { { category, "Northern California newspapers and magazines", [{path, "norcal"}] }
+            , [ { { category, "Sacramento newspapers and magazines" }
+                  , [ { { category, "Sacramento newspapers" }
+                        , [ { { publication, "Sacramento Bee sections" }
+                              , [ { section, "Sports" }
+                                  , { section, "News" }
+                                  , { section, "Obituaries" }
+                                ]
+                            }
+                            , { publication, "Sacramento News & Review" }
+                            , { publication, "Sacramento Press" }
+                            , { publication, "Sacramento Business Journal" }
+                            , { publication, "Sacramento Observer" }
+                            , { publication, "Sacramento City Express" }
+                            , { publication, "East Sacramento News" }
+                            , { publication, "The Land Park News" }
+                            , { publication, "The Pocket News" }
+                          ]
+                      }
+                      , { { category "Sacramento magazines" }
+                          , [ { publication, "Comstocks" }
+                              , { publication, "SacTown" }
+                              , { publication, "Sacramento Magazine" }
+                            ]
+                        }
+                    ]
+                }
+                , { { category "Greater Sacramento area newspapers" }
+                    , [ { publication, "Carmichael Times" }
+                        , { publication, "Arden Carmichael News" }
+                        , { publication, "Davis Enterprise" }
+                        , { publication, "Roseville Press Tribune" }
+                        , { publication, "Woodland Daily Democrat" }
+                        , { publication, "Elk Grove Citizen" }
+                        , { publication, "Auburn Journal" }
+                        , { publication, "Grass Valley-Nevada City Union" }
+                        , { publication, "El Dorado County Mountain Democrat" }
+                        , { publication, "Loomis News" }
+                      ]
+                  }
+                , { { category "San Francisco and Bay Area newspapers" }
+                    , [ { publication, "Vallejo Times Herald" }
+                        , { publication, "Santa Rosa Press Democrat" }
+                        , { publication, "SF Gate" }
+                        , { publication, "San Francisco Bay Guardian" }
+                        , { publication, "East Bay Times" }
+                        , { publication, "SF Weekly" }
+                        , { publication, "KQED Bay Area Bites" }
+                      ]
+                  }
+                , { { category, "Central California newspapers" }
+                    , [ { publication, "Modesto Bee" }
+                        , { publication, "Stockton Record" }
+                      ]
+                  }
+                , { { category, "Mendocino county newspapers" }
+
+
+
+                    , [ {publication, {"Fort Bragg Advocate News", [{ alt, "fort-bragg-advocate-news" }]}}
+                        , {publication, {"The Mendocino Beacon",     [{ alt, "mendocino-beacon"         }]}}
+                      ]
+                  }
+                , { { category
+                      , { "Humboldt & Trinity county newspapers"
+                          , [ {dir_prefix, "humboldt-trinity"} ]
+                        }
+                    }
+                    , [ {publication, {"Humboldt Senior Resource Center's Senior News", [{ alt, "senior-news"           }]}}
+                        , {publication, {"North Coast Journal",                           [{ alt, "north-coast-journal"   }]}}
+                        , {publication, {"Eureka Times Standard",                         [{ alt, "eureka-times-standard" }]}}
+                        , {publication, {"Ferndale Enterprise",                           [{ alt, "ferndale-enterprise"   }]}}
+                        , {publication, {"Mad River Union",                               [{ alt, "mad-river-union"       }]}}
+                      ]
+                  }
+              ]
+          }
+        , { { category
+              , { "Popular magazines"
+                  , [ {dir_prefix, "pop"} ]
+                }
+            }
+            , [ {publication, {"Braille Monitor",      [{ alt, "braille-monitor"    }]}}
+                , {publication, {"Capital Public Radio", [{ alt, "CPR"                }]}}
+                , {publication, {"Entertainment Weekly", [{ alt, "EW"                 }]}}
+                , {publication, "Fortune"}
+                , {publication, {"Mental Floss",         [{ alt, "mental-floss"       }]}}
+                , {publication, {"Atlas Obscura",        [{ alt, "atlas-obscura"      }]}}
+                , {publication, {"New Scientist",        [{ alt, "new-scientist"      }]}}
+                , {publication, "Newsweek"}
+                , {publication, {"Travel & Leisure",     [{ alt, "travel-and-leisure" }]}}
+              ]
+          }
+        , { { category
+              , { "Old Time Radio Theater"
+                  , [ {dir_prefix, "OTR"} ]
+                }
+            }
+            , [ { {category, "Mystery and drama"}
+                  , [ {publication, {"Broadway's my Beat",                [{ alt, "broadways-my-beat"     }]}}
+                      , {publication, {"Black Stone the Magic Detective",   [{ alt, "black-stone"           }]}}
+                      , {publication, {"Boston Blacky",                     [{ alt, "boston-blacky"         }]}}
+                      , {publication, {"Crime Does Not Pay",                [{ alt, "crime-does-not-play"   }]}}
+                      , {publication, "Dragnet"}
+                      , {publication, {"Gang Busters",                      [{ alt, "gang-busters"          }]}}
+                      , {publication, {"Inner Sanctum",                     [{ alt, "inner-sanctum"         }]}}
+                      , {publication, {"Mercury Radio Theater",             [{ alt, "mercury-radio-theater" }]}}
+                      , {publication, {"Mystery Traveler",                  [{ alt, "mystery-traveler"      }]}}
+                      , {publication, {"Richard Diamond Private Detective", [{ alt, "richard-diamond"       }]}}
+                      , {publication, {"Adventures of Sam Spade",           [{ alt, "sam-spade"             }]}}
+                      , {publication, {"The Shadow",                        [{ alt, "the-shadow"            }]}}
+                      , {publication, "Suspense"}
+                      , {publication, {"The Whistler",                      [{ alt, "the-whistler"          }]}}
+                      , {publication, {"Light's Out",                       [{ alt, "lights-out"            }]}}
+                    ]
+                }
+                , { {category, "Comedy"}
+                    , [ {publication, {"Abbot and Costello",                  [{ alt, "abbot-and-costello"            }]}}
+                        , {publication, {"The Adventures of Ozzie and Harriet", [{ alt, "ozzie-and-harriet"             }]}}
+                        , {publication, {"The Bickerson's",                     [{ alt, "the-bickersons"                }]}}
+                        , {publication, {"Father Knows Best",                   [{ alt, "father-knows-best"             }]}}
+                        , {publication, {"Fibber McGee and Molly",              [{ alt, "fibber-mcgee-and-molly"        }]}}
+                        , {publication, {"The Fred Allen Show",                 [{ alt, "the-fred-allen-show"           }]}}
+                        , {publication, {"George Burns and Gracie Allen",       [{ alt, "george-burns-and-gracie-allen" }]}}
+                        , {publication, {"Life of Riley",                       [{ alt, "life-of-riley"                 }]}}
+                        , {publication, {"The Red Skelton Show",                [{ alt, "the-red-skelton-show"          }]}}
+                      ]
+                  }
+                , { {category, "Westerns"}
+                    , [ {publication, {"The Cisco Kid",              [{ alt, "the-cisco-kid" }]}}
+                        , {publication, {"Gun Smoke",                  [{ alt, "gun-smoke"     }]}}
+                        , {publication, {"The Lone Ranger",            [{ alt, "lone-ranger"   }]}}
+                        , {publication, {"Tales of the Texas Rangers", [{ alt, "texas-rangers" }]}}
+                      ]
+                  }
+                , { {category, "Science fiction and fantasy"}
+                    , [ {publication, {"The Blue Beetle",  [{ alt, "blue-beetle"  }]}}
+                        , {publication, "Escape"}
+                        , {publication, {"The Green Hornet", [{ alt, "green-hornet" }]}}
+                        , {publication, {"X Minus 1",        [{ alt, "x-minus-1"    }]}}
+                      ]
+                  }
+                , {publication, "Commercials"}
+              ]
+          }
+        , { { category
+              , { "Games"
+                  , [ {dir_prefix, "games"} ]
+                }
+            }
+            , [ {publication, "Crosswords"}
+                , {publication, "Trivia"}
+              ]
+          }
+        , { { category
+              , { "Community information and resources"
+                  , [ {dir_prefix, "community-resources"} ]
+                }
+            }
+            , [ { { category, "Podcasts"}
+                  , [ { publication
+                        , { "Beyond Barriers Project"
+                            , [ {dir_prefix, "SFTB"}
+                                , {link, "beyond-barriers"}
+                              ]
+                          }
+                      }
+                      , {publication, {"The Redacted Files Podcast", [{alt, "TRP"}]}}
+                    ]
+                }
+                , { { category, "Poetry" }
+                    , [ {publication, {"Brad Buchanan",       [{ alt, "brad-buchanan"      }]}}
+                        , {publication, {"Writer's on the air", [{ alt, "writers-on-the-air" }]}}
+                      ]
+                  }
+              ]
+          }
+        , { { category
+              , { "Blindness information and resources"
+                  , [ {dir_prefix, "blindness-resources"} ]
+                }
+            }
+            , [ { { category
+                    , { "Organizations"
+                        , [ {dir_prefix, "orgs"} ]
+                      }
+                  }
+                  , [ { { category
+                          , { "Society for the Blind"
+                              , [ {dir_prefix, "SFTB"} ]
+                            }
+                        }
+                        , [ {publication, {"SFB Connection",                           [{ alt, "sfb-connection"   }]}}
+                            , {publication, {"Monthly newsletter",                       [{ alt, "newsletter"       }]}}
+                            , {publication, {"Society for the Blind's student handbook", [{ alt, "student-handbook" }]}}
+                            , {publication, {"Beyond Barriers Project",                  [{ alt, "beyond-barriers"  }]}}
+                          ]
+                      }
+                      , {publication, {"The Earle Baum Center",           [{ alt, "EBC"   }]}}
+                      , {publication, {"Sierra Services for the Blind",   [{ alt, "SSFTB" }]}}
+                      , {publication, {"California Council of the Blind", [{ alt, "CCB"   }]}}
+                    ]
+                }
+                , { { category
+                      , { "Publications"
+                          , [ {dir_prefix, "publications" } ]
+                        }
+                    }
+                    , [ {publication, {"Braille Monitor",           [{ link, "braille-monitor" }]}}
+                        , {publication, {"Client Assistence Program", [{ link, "CAP"              }]}}
+                      ]
+                  }
+              ]
+          }
+        , { { category
+              , { "Education and resources"
+                  , [ {dir_prefix, "edu"} ]
+                }
+            }
+            , [ {publication, {"Society for the Blind's student handbook", [{ link, "student-handbook"       }]}}
+                , {publication, {"Balance exercises",                        [{ alt, "balance-exercises"       }]}}
+                , {publication, {"Achieve a healthy weight by UC Davis",     [{ alt, "uc-davis-healthy-weight" }]}}
+                , {publication, {"Yuba-Sutter Meals On Wheels",              [{ alt, "YSMOW"                   }]}}
+                , {publication, {"Client Assistence Program",                [{ alt, "CAP"                     }]}}
+              ]
+          }
+        , { {category, "Society for the Blind" }
+            , [ {publication, {"SFB Connection",                           [{ link, "sfb-connection"   }]}}
+                , {publication, {"Monthly newsletter",                       [{ link, "SFTB-newsletter"  }]}}
+                , {publication, {"Society for the Blind's student handbook", [{ link, "student-handbook" }]}}
+                , {publication, {"Beyond Barriers Project",                  [{ link, "beyond-barriers"  }]}}
+              ]
+          }
+      ]
+
+% }}-
 % TODO converting this to JSON should be trivial
 % TODO `meta` edges
 %      "directional" edges follow the pattern {dir, #{...}} so tag, type, periodicity (what else?) nodes will be tagged as meta and will be incident edges (is that the right term?)
@@ -1015,7 +1135,7 @@ publication_guide() -> % {{-
 
 % }}-
 
-% TODO So this could safely be set to [], but need to make sure that it doesn't affect anything. At least, tried renaming it Rest, and use the 
+% TODO So this could safely be set to [], but need to make sure that it doesn't affect anything. At least, tried renaming it Rest, and use the
 % logger:debug(#{make_title_dir => Rest})
 % and the only thing that came up was []
 %                                      |
@@ -1042,7 +1162,7 @@ do_dir_options % dir_prefix {{-
 ->
     do_dir_options
       ( Prefix ++ "-" ++ Title
-      , Opts 
+      , Opts
       );
 
 % }}-
@@ -1052,7 +1172,7 @@ do_dir_options % link {{-
   )
 ->
     {ok, PublicationDirs} =
-        file:list_dir(?PUBLICATION_ROOT),
+        file:list_dir(?PUBLICATIONS_DIR),
 
     % Could have matched anywhere else, but matching at the end seemed the most logical
     MatchAtTheEnd =
@@ -1062,7 +1182,7 @@ do_dir_options % link {{-
                       _ -> true
             end
         end,
-    
+
     % There should only be one match when linking.
     LinkDir =
         case lists:filter(MatchAtTheEnd, PublicationDirs) of
@@ -1076,7 +1196,7 @@ do_dir_options % link {{-
 
     do_dir_options
       ( LinkDir
-      , Opts 
+      , Opts
       ).
 
 % }}-
@@ -1085,7 +1205,7 @@ make_title_dir({Title, UnsortedOpts}) ->
       ( Title
       % `alt` has to come before dir_prefix
       % see NOTE at `draw_content_with_subitems/7`
-      % 
+      %
       % Preserves the order of the tuples of a given key
       % lists:keysort(1, [{b, "miez"}, {a, "lofa"}, {b, "balabab"}]).
       % [{a,"lofa"},{b,"miez"},{b,"balabab"}]
@@ -1097,7 +1217,7 @@ make_title_dir({Title, UnsortedOpts}) ->
 %      way more explicit that a string is needed
 make_title_dir([Char|_] = Title) when is_integer(Char) -> % {{-
     Dir =
-        filename:join(?PUBLICATION_ROOT, Title),
+        filename:join(?PUBLICATIONS_DIR, Title),
     % no fuss if exists, won't throw
     file:make_dir(Dir),
 %     erlang:display([make_title_dir, Dir]),
@@ -1120,12 +1240,12 @@ list_recording_vertices(Dir) -> % {{-
             end
         end,
 
-    MakeRecordingMeta =
+    MakeRecordingVertexData =
         fun (Filename) ->
             futil:pipe
               ([ Filename
                , (futil:cflip(fun filename:absname/2))(Dir)
-               , fun make_recording_meta/1
+               , fun make_recording_vertex_data/1
                ])
         end,
 
@@ -1159,199 +1279,130 @@ list_recording_vertices(Dir) -> % {{-
        % `draw_item/7`  but it  would have  been a  hassle to
        % figure  out `Dir`  - plus  it would  have
        % been an extra loop
-       , (futil:curry(fun lists:map/2))(MakeRecordingMeta)
+       , (futil:curry(fun lists:map/2))(MakeRecordingVertexData)
 %      , fun (X) -> erlang:display([list_recording_vertices, X]), X end
        ]).
 % }}-
 
-% LeafContentItem = { LeafItemType, TitleMaybeWithOptions }
-% LeafItemType = publication | section
-% TitleMaybeWithOptions = Title | { Title, DirOptions }
-% Title = String
-% DirOptions = [ {Option, String} ]
-% Option = dir_prefix | alt
-draw_leaf_item % {{-
-( Direction
-, Graph
-, ParentVertex
-, { LeafItemType, TitleMaybeWithOptions } = LeafContentItem
-, ItemNumber
-, Rest
-)
-when LeafItemType =:= publication
-   ; LeafItemType =:= section
-->
-    RecordingVertices =
-        futil:pipe
-          ([ TitleMaybeWithOptions
-           , fun make_title_dir/1
-           , fun list_recording_vertices/1
-           ]),
-    % => [ Map ]
-
-    LeafItemVertex =
-        make_meta(LeafContentItem, ItemNumber),
-
-    draw_item
-      ( Direction
-      , Graph
-      , ParentVertex
-      , LeafItemVertex
-      , RecordingVertices
-      , Rest
-      ).
-
-% }}-
-% ContentItemWithSubItemsType = category | sectioned_publication
-% TitleMaybeWithOptions = Title | { Title, DirOptions }
-% Title = String
-% DirOptions = [ {Option, String} ]
-% Option = dir_prefix   % no `alt`!!!
-%
-% NOTE "NO `alt`"
-%      It  does   not  make  sense   to  use  `alt`   on  a
-%      ContentItemWithSubItems (and may  even cause a crash
-%      because then  every LeafSubItems would get  the same
-%      alternative directory  name (effectively  making all
-%      LeafSubItems  linking to  the  same  dir under  that
-%      ContentItemWithSubItems, right?)
-draw_content_with_subitems % {{-
-( Direction
-, Graph
-, #{ type := _ContentType} = ParentVertex
-% , [ category, _ContentTitle | MaybePrefix ] = ContentItemWithSubItems
-, { ContentItemWithSubItemsType
-  , TitleMaybeWithOptions
-  } = ContentItemWithSubItems
-, ItemNumber
-% Explicitly disallow ContentItemWithSubItems without any sub items
-, [_|_] = SubItems
-, Rest
-)
-when ContentItemWithSubItemsType =:= category
-   ; ContentItemWithSubItemsType =:= sectioned_publication
-->
-    PrefixedSubItems =
-        prefix_subitems(SubItems, TitleMaybeWithOptions),
-
-    ItemVertex =
-        make_meta(ContentItemWithSubItems, ItemNumber),
-
-    draw_item
-      ( Direction
-      , Graph
-      , ParentVertex
-      , ItemVertex
-      , PrefixedSubItems
-      , Rest
-      ).
-
-% }}-
-draw_article % {{-
-( Direction
-, Graph
-, ParentVertex
-, #{} = ItemVertex
-, Rest
-)
-->
-    draw_item
-      ( Direction
-      , Graph
-      , ParentVertex
-      , ItemVertex
-      , []
-      , Rest
-      ).
-
-% }}-
 draw_item
 ( Direction
 , Graph
 , ParentVertex
-, #{} = ItemVertex
-, SubItems
-, Rest
+% , #{} = ItemVertex
+% , SubItems
+, #{ sub_items := SubItems } = ContentItem
+, ItemNumber
+, RestContentItems
 )
+when is_tuple(ContentItem)
 ->
 %     % erlang:display([draw_item, #{direction => Direction}]),
 %     % erlang:display([draw_item, #{ parent => ParentVertex}]),
 %     % erlang:display([draw_item, #{ item => ItemVertex}]),
 %     % erlang:display([draw_item, #{ subitems => SubItems}]),
-%     % erlang:display([draw_item, #{ rest => Rest}]),
+%     % erlang:display([draw_item, #{ rest => RestContentItems}]),
 
-    digraph:add_vertex(Graph, ItemVertex),
-    add_hierarchy_edges(Graph, ParentVertex, ItemVertex),
+    ItemVertexData = ItemVertex =
+        to_vertex_data(ContentItem, ItemNumber),
+
+    digraph:add_vertex(Graph, ItemVertexData),
+    add_hierarchy_edges(Graph, ParentVertex, ItemVertexData),
 
     case Direction of
         first ->
-            add_edge(Graph, first, ParentVertex, ItemVertex);
+            add_content_edge(Graph, first, ParentVertex, ItemVertex);
 
         % NOTE Not possible, because the being the last will always
         %      involve  other  edges  as well;  either  `first`  or
         %      `prev` and `next` respectively.
         % last ->
-        %     add_edge(Graph, last, ParentMeta, MetaB);
+        %     add_content_edge(Graph, last, ParentVertexData, VertexDataB);
 
         first_and_last ->
-            add_edge(Graph, first, ParentVertex, ItemVertex),
-            add_edge(Graph, last, ParentVertex, ItemVertex);
+            add_content_edge(Graph, first, ParentVertex, ItemVertex),
+            add_content_edge(Graph, last, ParentVertex, ItemVertex);
 
         PrevItemVertex when is_map(PrevItemVertex) ->
-            add_edge(Graph, prev, ItemVertex, PrevItemVertex),
-            add_edge(Graph, next, PrevItemVertex, ItemVertex);
+            add_content_edge(Graph, prev, ItemVertex, PrevItemVertex),
+            add_content_edge(Graph, next, PrevItemVertex, ItemVertex);
 
         {PrevItemVertex, last} ->
-            add_edge(Graph, prev, ItemVertex, PrevItemVertex),
-            add_edge(Graph, next, PrevItemVertex, ItemVertex),
-            add_edge(Graph, last, ParentVertex, ItemVertex)
+            add_content_edge(Graph, prev, ItemVertex, PrevItemVertex),
+            add_content_edge(Graph, next, PrevItemVertex, ItemVertex),
+            add_content_edge(Graph, last, ParentVertex, ItemVertex)
     end,
 
-    do_draw([first|SubItems], Graph, ItemVertex),
-    do_draw([ItemVertex|Rest], Graph, ParentVertex).
+    First = #{ selection => -1 },
 
-make_recording_meta(AbsFilename) ->
-    BaseMeta =
+    do_draw([First|SubItems], Graph, ItemVertex),
+    do_draw([ItemVertex|RestContentItems], Graph, ParentVertex).
+
+make_recording_vertex_data(AbsFilename) ->
+    BaseVertexData =
         #{ type  => article
          , path  => AbsFilename
          , title => ""
          },
-    add_id(BaseMeta).
+    add_id(BaseVertexData).
 
 % TODO, NOTE, whatever
 % `ContentType` of each vertex in the content graph is
 % used as  the state of  the IVR state machine  at one
 % point - that  is, almost; `ivr:derive_state/1` keeps
 % `content.erl` and `ivr.erl` decoupled.
-make_meta
-( { ContentType, {Title, _Options} } = _ContentItem
+% to_vertex_data
+% ( { ContentType, {Title, _Options} } = _ContentItem
+% , ItemNumber
+% ) ->
+%     to_vertex_data
+%       ( { ContentType, Title }
+%       , ItemNumber
+%       );
+
+% to_vertex_data
+% ( { ContentType, [Char|_] = Title } = _ContentItem
+% , ItemNumber
+% )
+% when is_integer(Char)
+% ->
+%     BaseVertexData =
+%         #{ type      => ContentType
+%          , selection => ItemNumber
+%          , title     => Title
+%          },
+%     add_id(BaseVertexData).
+
+to_vertex_data
+% ( { ContentType, Title, Meta }
+( #{} = ContentItemHeader
 , ItemNumber
 ) ->
-    make_meta
-      ( { ContentType, Title }
-      , ItemNumber
-      );
-
-make_meta
-( { ContentType, [Char|_] = Title } = _ContentItem
-, ItemNumber
-)
-when is_integer(Char)
-->
-    BaseMeta =
-        #{ type      => ContentType
-         , selection => ItemNumber
-         , title     => Title
+    Adds =
+        % TODO replace with uuid
+        #{ selection => ItemNumber
+         , id => erlang:make_ref()
          },
-    add_id(BaseMeta).
+
+    futil:pipe(
+      [ ContentItemHeader
+      , (futil:curry(fun maps:merge/2))(Adds)
+      % The entire  point of this  module is to  convert the
+      % hierarchical map  into a`digraph`;  `sub_items` will
+      % be saved  before calling this function  and supplied
+      % to `do_draw/3`.  (`to_vertex_data/2` is  only called
+      % twice,  once in  `draw_content_graph/1` and  once in
+      % `draw_item/6`)
+      , (futil:curry(fun maps:remove/2))(sub_items)
+      ]).
+    % add_id(BaseVertexData).
 
 % This is what makes linking the same  publication  in
 % different categories possible.  Without IDs the same
 % `publication`  item   in  the  `publication_guide/0`
 % would link  to multiple categories, that  is, create
 % loop, and content graph would not be a tree anymore.
-add_id(BaseMeta) ->
-    BaseMeta#{id => erlang:make_ref()}.
+% add_id(BaseVertexData) ->
+%     BaseVertexData#{id => erlang:make_ref()}.
 
 % prefix_subitems
 % ( [ {publication, [_, _]}

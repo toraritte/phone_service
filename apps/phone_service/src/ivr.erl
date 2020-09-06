@@ -69,7 +69,7 @@ init(_Args) -> % {{-
          , playback_offset  => "0"
          , article_speed    => "0"
          , auth_status      => unregistered % | registered
-         , current_content  => hd(content:root())
+         , current_content  => hd(publication_guide:root())
          , current_children => []
          , playbacks        => []
          , prompt_speed     => 87
@@ -602,7 +602,7 @@ handle_event(
             % Set `current_content` (it is `none` at this point)
             % QUESTION Should this be set in `init/1` instead?
             %          I think it is easier to understand it this way.
-            % NewData = set_current(content:root(), Data),
+            % NewData = set_current(publication_guide:root(), Data),
             % NOTE set in init because of `next_content/3` complications
 
             case Digit of
@@ -1391,7 +1391,7 @@ handle_event
     SelectionResult =
         [  Child
         || Child
-           % <- content:pick(children, CurrentContent)
+           % <- publication_guide:pick(children, CurrentContent)
            <- CurrentChildren
            ,  maps:find(selection, Child) =:= {ok, Selection}
         ],
@@ -1447,7 +1447,7 @@ when Digit =:= "1"
     NewCurrentChildren =
         case CurrentChildren =:= [] of
             true ->
-                content:pick(children, CurrentContent);
+                publication_guide:pick(children, CurrentContent);
             false ->
                 CurrentChildren
         end,
@@ -1544,7 +1544,7 @@ next_content % {{-
        Direction =:= content_root
 ->
     NextContent =
-        case content:pick(Direction, CurrentContent) of
+        case publication_guide:pick(Direction, CurrentContent) of
             [] -> none;
             [Content] -> Content
         end,
@@ -1552,7 +1552,7 @@ next_content % {{-
         Data#{ current_content := NextContent },
     NextState =
         % When  there  is  no  vertex in  a  given  direction,
-        % `content:pick/2`  will   return  `none`,   in  which
+        % `publication_guide:pick/2`  will   return  `none`,   in  which
         % case  `NextState` is  set  to  a non-existing  state
         % so  that  control  will  be  redirected  to  special
         % uninterruptable warning  states in the  next `case`;

@@ -1,0 +1,25 @@
+{ application
+, publication_guide
+, [ { description
+    , "Content  storage   and  organization"
+      "in  a hierarchical  digraph for  the"
+      "`phone_service` IVR"
+    }
+  , {vsn, "0.1.0"}
+  , {registered, []}
+
+  , { applications
+    , [ kernel
+      , stdlib
+      % Storage API, using the backend configured in ./publication_guide.app.erl
+      , content_storage
+      , futil
+      ]
+    }
+
+  , {env,[]}
+  , {modules, []}
+  , {licenses, ["Apache 2.0"]}
+  , {links, []}
+  ]
+}.
