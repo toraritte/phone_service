@@ -2,8 +2,7 @@
 , content_storage
 , [ { description
     , "Stateless library for  abstracting out the"
-      "storage  layer for  the  content graph  in"
-      "`publication_guide`"
+      "storage  layer for  the  Access News service."
     }
   , {vsn, "0.1.0"}
   , {registered, []}
@@ -12,7 +11,7 @@
     , [ kernel
       , stdlib
       % To be able to refer to type specs defined there for `-callback`s
-      , publication_guide
+      % , publication_guide
       ]
     }
 

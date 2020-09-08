@@ -73,11 +73,11 @@ init(_Args) -> % {{-
     %     end,
 
     Graph =
-        futil:pipe(
-          [ content_storage_api:list()
-          , draw_content_graph/1
-          ]),
-        % draw_content_graph(PublicationGuide),
+        % futil:pipe(
+        %   [ content_storage_api:list()
+        %   , draw_content_graph/1
+        %   ]),
+        draw_content_graph(?PUBLICATION_GUIDE),
 
     {ok, Graph}.
 % }}-
@@ -216,10 +216,12 @@ draw_content_graph([]) ->
 
 draw_content_graph(PublicationGuide) ->
 
+    UnfoldedPubGuide =
+        unfold_publication_guide(PublicationGuide),
     % { RootContentItem
     % , [_|_] = RootItems
     % } =
-    #{ sub_items := RootItems } = PublicationGuide,
+    #{ sub_items := RootItems } = UnfoldedPubGuide,
 
     % NOTE Vertex = Data
     % The way  directect graphs are implemented  in Erlang
@@ -229,7 +231,7 @@ draw_content_graph(PublicationGuide) ->
     % Just wanted to make the distinction that even though
     % content-wise the two variable holds identical data.
     RootVertex = RootVertexData =
-        to_vertex_data(PublicationGuide, 0),
+        to_vertex_data(UnfoldedPubGuide, 0),
 
     FirstRunGraph =
         digraph:new([cyclic, protected]), % default values made explicit
@@ -278,6 +280,13 @@ draw_content_graph(PublicationGuide) ->
 
     SecondRunGraph.
 
+unfold_publication_guide(PublicationGuide) ->
+    % TRAVERSAL 1:
+    % resolve   queries  (i.e.,   populate
+    % sections/publications with articles)
+
+    % TRAVERSAL 2: substitute links
+
 % TODO Don't think this is possible; commenting out to see
 % do_draw([], _Graph, _ParentVertex) ->
 %     done;
@@ -300,7 +309,20 @@ do_draw  % ContentType, [ PrevItemVertex ] {{-
 
 % }}-
 
-do_draw  % content_with_subitems, [          first, ContentItem | []    = Rest ] {{-
+% do_draw :: PrevVertexAndItems -> Graph -> ParentVertex -> ()
+% PrevVertexAndItems = [ Vertex | [ ContentItem ] ]
+% Vertex      = #{ type => ContentType, title => ContentTitle }
+% ContentItem = #{ type => ContentType
+%                , title => ContentTitle
+%                , sub_items => [ ContentItem ]
+%                , path_ref => SimplifiedTitle
+%                , id => ContentStorageID
+%                }
+% ContentType = category | publication | section | article
+% Title = String
+% SimplifiedTitle = [0-9a-zA-Z_-]
+% ContentStorageID = UUID
+do_draw  % {{-
 ( [ #{ selection := Selection } = PrevItemVertex
   , #{} = ContentItem % May be a leaf item, hence no match on `sub_items`
   | RestContentItems
@@ -751,22 +773,73 @@ publication_guide() -> % {{-
 % + linking is also expanded on the storage_api level
 % TODO linear queries? use digraph's ETS tables
 publication_guide() -> % {{-
-    % NOTE
-    % {path, ...} meta  only matters to `content_storage`,
-    % and it  should be re-produced  with `list`/`export`.
-    % For  example,  without  the  path  meta  tuple,  the
-    % path  will be  the title  converted to  [a-z0-9] and
-    % `-`  replacing  spaces,  but using  the  path  value
-    % otherwise. To  reproduce: if  the current  path part
-    % does not match  the reduced title then  use the path
-    % part verbatim in  a path tuple added  to the content
-    % item.
-    % /main/... =/= "main-menu" -> add {path, "main"}
-    % (or, just check "path" in the "meta" proplist)
     #{ type => category
-       , title => "Main menu"
-       , path => "main"
-       , sub_items =>
+     , title => "Main menu"
+     , sub_items =>
+       [ #{ type => category
+          , title =>  "Store sales advertising"
+          , sub_items =>
+            [ #{ type => category
+               , title =>  "Grocery stores"
+               , sub_items =>
+                 [ #{ type => publication
+                    , title =>  "Safeway"
+                    , sub_items =>
+                      [ #{ type => section
+                         , title =>  "Week 7/15/2020 to 7/21/2020"
+                         % QUERY
+                         % can for any property, until it returns results for the same publication. There won't be a crash, but then articles will belong publications/sections where they shouldn't be
+                         , query => {issue, "week-29"}
+                         }
+                      , #{ type => section
+                         , title =>  "Week 7/22/2020 to 7/28/2020"
+                         , query => {issue, "week-30"}
+                         }
+                      ]
+                    }
+                 , #{ type => publication
+                    , query => {path_ref, "raleys"}
+                    }
+                  % , title => "Raley's"
+                  % , query => {id, "123e4567-e89b-12d3-a456-426614174000"}
+                 ]
+               }
+            , #{ type => category
+               , title =>  "Drug stores"
+               , sub_items =>
+               % LINKS
+               % Always refer to the title. In the case of "Raley's" below, it means it has to match the title once it has been expanded above, but the `{query, ...}` syntax is probably less error prone, and it could be used at any time.
+                 [ #{ link => "Safeway" }
+                 , #{ link => "Raley's" }
+               % or
+               % , #{ type => publication
+               %    , query => {path_ref, "raleys"
+               %    }
+                 % TODO make sure that linked items' type fit the context! For example, the link below points to a "section" type so in this context it should be lifted to publication.
+                 % Or should it? would this be an issue?
+                 , #{ link => "Week 7/22/2020 to 7/28/2020" }
+               % or
+               % , #{ type => section
+               %    , title =>  "Week 7/22/2020 to 7/28/2020"
+               %    , query => {tag, "week-30"}
+               %    }
+                 ]
+               }
+            , #{ type => category
+               , title =>  "Discount stores"
+               , sub_items =>
+                 [
+                 ]
+               }
+            ]
+          }
+       , #{ type => category
+          , title =>  "Northern California newspapers and magazines"
+          , sub_items =>
+            [
+            ]
+          }
+       ]
      }
     , [ { #{ type => category, title => "Store sales advertising", path => "ads"}
           , [ { { category,  [{title, "Grocery stores"}]  }
@@ -1380,6 +1453,7 @@ to_vertex_data
     Adds =
         % TODO replace with uuid
         #{ selection => ItemNumber
+        % TODO this is only important if there is no ID!
          , id => erlang:make_ref()
          },
 
@@ -1387,7 +1461,7 @@ to_vertex_data
       [ ContentItemHeader
       , (futil:curry(fun maps:merge/2))(Adds)
       % The entire  point of this  module is to  convert the
-      % hierarchical map  into a`digraph`;  `sub_items` will
+      % hierarchical `publication_guide/0` map  into a`digraph`;  `sub_items` will
       % be saved  before calling this function  and supplied
       % to `do_draw/3`.  (`to_vertex_data/2` is  only called
       % twice,  once in  `draw_content_graph/1` and  once in
@@ -1502,6 +1576,83 @@ merge_dir_options
             }
     end.
 
+do_content_item
+( #{ sub_items := _
+   % `ContentItem`s with `sub_items` key should have a title, because it is not expandable, unlike queries and links. Therefore, if it is missing, that is a user error.
+   , title := Title
+   } = ContentItem
+, #{} = FlatItems
+)
+->
+    NewTitles =
+        % Yes, this will overwrite any existing key if there are items with the same title, but those should be generic (section) names, and thus shouldn't even be linked. (E.g., SacBee -> News shouldn't be linked to somewhere else.) TODO What about topical categories? In the future we may come up something like this, but then that shouldbe a problem for then...
+        FlatItems#{ Title => ContentItem },
+        % This is the opposite of `maps:update/3` - throws an exception if the key exists.
+        % Rationale:
+        % case maps:find(Title, FlatItems) of
+        %     {ok, _} ->
+        %         FlatItems#{ Title => ContentItem };
+        %     error ->
+        %         error(duplicate_title, [Title])
+        % end,
+
+    DoSubItems =
+        % fun(SubItems) ->
+        %     MapFun =
+        %         fun(ContentItem) ->
+        %             do_content_item(ContentItem, NewTitles)
+        %         end,
+        %     lists:map(MapFun, SubItems)
+        % end,
+    % OR
+        (futil:curry(fun lists:map/2))
+          ((futil:cflip(fun do_content_item/2))(NewTitles)),
+
+    maps:update_with
+      ( sub_items
+      , DoSubItems
+      , ContentItem
+      );
+
+do_content_item
+( #{ query := Query } = QueryItem
+)
+->
+    % Result = [ Article ]
+    % Article = #{ title => String
+    %            , path  => Path
+    %            , publication => String
+    %            , issue => String (?)
+    %            , ...
+    %            }
+    % Path = URL | FilesystemPath
+
+    % (See note at "% QUERY" comment.)
+    [ #{ publication := Publication } | _ ] =
+    Result =
+        content_storage_api:query(Query),
+
+    Articles =
+        lists:map
+          ( fun(Item) -> maps:put(type, article, Item) end
+          , Result
+          ),
+
+    futil:pipe(
+      [ QueryItem
+      , (futil:curry(fun maps:merge/2))(#{ title => Publication })
+      , (futil:curry(fun maps:remove/2))(query)
+      , ((futil:curry(fun maps:put/3))(sub_items))(Articles)
+      ]);
+
+do_content_item
+( #{ link := Link
+
+do_subitems(SubItems) when is_list(SubItems) ->
+    lists:map
+      ( fun do_content_item/1
+      , SubItems
+      ).
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
