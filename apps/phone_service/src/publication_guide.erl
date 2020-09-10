@@ -776,7 +776,9 @@ publication_guide() -> % {{-
     #{ type => category
      , title => "Main menu"
      , sub_items =>
-       [ #{ type => category
+       [ #{ link_to => "week-29" }
+       , #{ link_to => "week-30" }
+       , #{ type => category
           , title =>  "Store sales advertising"
           , sub_items =>
             [ #{ type => category
@@ -784,8 +786,10 @@ publication_guide() -> % {{-
                , sub_items =>
                  [ #{ type => publication
                     , title =>  "Safeway"
+                    , link_id => "safeway"
                     , sub_items =>
                       [ #{ type => section
+                         , link_id => "week-29"
                          , title =>  "Week 7/15/2020 to 7/21/2020"
                          % QUERY
                          % can for any property, until it returns results for the same publication. There won't be a crash, but then articles will belong publications/sections where they shouldn't be
@@ -793,12 +797,14 @@ publication_guide() -> % {{-
                          }
                       , #{ type => section
                          , title =>  "Week 7/22/2020 to 7/28/2020"
+                         , link_id => "week-30"
                          , query => {issue, "week-30"}
                          }
                       ]
                     }
                  , #{ type => publication
                     , query => {path_ref, "raleys"}
+                    , link_id => "raleys"
                     }
                   % , title => "Raley's"
                   % , query => {id, "123e4567-e89b-12d3-a456-426614174000"}
@@ -809,15 +815,15 @@ publication_guide() -> % {{-
                , sub_items =>
                % LINKS
                % Always refer to the title. In the case of "Raley's" below, it means it has to match the title once it has been expanded above, but the `{query, ...}` syntax is probably less error prone, and it could be used at any time.
-                 [ #{ link => "Safeway" }
-                 , #{ link => "Raley's" }
+                 [ #{ link_to => "safeway" }
+                 , #{ link_to => "raleys" }
                % or
                % , #{ type => publication
                %    , query => {path_ref, "raleys"
                %    }
                  % TODO make sure that linked items' type fit the context! For example, the link below points to a "section" type so in this context it should be lifted to publication.
                  % Or should it? would this be an issue?
-                 , #{ link => "Week 7/22/2020 to 7/28/2020" }
+                 , #{ link_to => "week-29" }
                % or
                % , #{ type => section
                %    , title =>  "Week 7/22/2020 to 7/28/2020"
@@ -828,7 +834,8 @@ publication_guide() -> % {{-
             , #{ type => category
                , title =>  "Discount stores"
                , sub_items =>
-                 [
+                 [ #{ link_to => "week-29" }
+                 , #{ link_to => "week-30" }
                  ]
                }
             ]
@@ -839,6 +846,8 @@ publication_guide() -> % {{-
             [
             ]
           }
+       , #{ link_to => "week-29" }
+       , #{ link_to => "week-30" }
        ]
      }
     , [ { #{ type => category, title => "Store sales advertising", path => "ads"}
@@ -1576,37 +1585,25 @@ merge_dir_options
             }
     end.
 
-do_content_item
+do_content_item( #{} = ContentItem) ->
+    futil:pipe(
+      [ ContentItem
+      , fun resolve_content_item/1
+      , fun save_links/1
+      ]).
+
+resolve_content_item
 ( #{ sub_items := _
    % `ContentItem`s with `sub_items` key should have a title, because it is not expandable, unlike queries and links. Therefore, if it is missing, that is a user error.
    , title := Title
    } = ContentItem
-, #{} = FlatItems
 )
 ->
-    NewTitles =
-        % Yes, this will overwrite any existing key if there are items with the same title, but those should be generic (section) names, and thus shouldn't even be linked. (E.g., SacBee -> News shouldn't be linked to somewhere else.) TODO What about topical categories? In the future we may come up something like this, but then that shouldbe a problem for then...
-        FlatItems#{ Title => ContentItem },
-        % This is the opposite of `maps:update/3` - throws an exception if the key exists.
-        % Rationale:
-        % case maps:find(Title, FlatItems) of
-        %     {ok, _} ->
-        %         FlatItems#{ Title => ContentItem };
-        %     error ->
-        %         error(duplicate_title, [Title])
-        % end,
-
     DoSubItems =
-        % fun(SubItems) ->
-        %     MapFun =
-        %         fun(ContentItem) ->
-        %             do_content_item(ContentItem, NewTitles)
-        %         end,
-        %     lists:map(MapFun, SubItems)
-        % end,
-    % OR
-        (futil:curry(fun lists:map/2))
-          ((futil:cflip(fun do_content_item/2))(NewTitles)),
+        lists:map
+          ( fun do_content_item/1
+          , SubItems
+          ),
 
     maps:update_with
       ( sub_items
@@ -1614,45 +1611,55 @@ do_content_item
       , ContentItem
       );
 
-do_content_item
-( #{ query := Query } = QueryItem
+% resolve_content_item
+% ( #{ query := Query } = QueryItem
+% )
+% ->
+%     % Result = [ Article ]
+%     % Article = #{ title => String
+%     %            , path  => Path
+%     %            , publication => String
+%     %            , issue => String (?)
+%     %            , ...
+%     %            }
+%     % Path = URL | FilesystemPath
+
+%     % (See note at "% QUERY" comment.)
+%     [ #{ publication := Publication } | _ ] =
+%     Result =
+%         content_storage_api:query(Query),
+
+%     Articles =
+%         lists:map
+%           ( fun(Item) -> maps:put(type, article, Item) end
+%           , Result
+%           ),
+
+%     futil:pipe(
+%       [ QueryItem
+%       % Use the title of the `QueryItem` if none speficied in the publication guide
+%       , (futil:curry(fun maps:merge/2))(#{ title => Publication })
+%       , (futil:curry(fun maps:remove/2))(query)
+%       , ((futil:curry(fun maps:put/3))(sub_items))(Articles)
+%       ]);
+
+resolve_content_item(#{ link_to := LinkID }) ->
+    get(LinkID);
+
+resolve_content_item(#{} = ContentItem) ->
+    ContentItem.
+
+save_links
+( #{ link_id := LinkID } = ResolvedContentItem
 )
 ->
-    % Result = [ Article ]
-    % Article = #{ title => String
-    %            , path  => Path
-    %            , publication => String
-    %            , issue => String (?)
-    %            , ...
-    %            }
-    % Path = URL | FilesystemPath
-
-    % (See note at "% QUERY" comment.)
-    [ #{ publication := Publication } | _ ] =
-    Result =
-        content_storage_api:query(Query),
-
-    Articles =
-        lists:map
-          ( fun(Item) -> maps:put(type, article, Item) end
-          , Result
-          ),
-
-    futil:pipe(
-      [ QueryItem
-      , (futil:curry(fun maps:merge/2))(#{ title => Publication })
-      , (futil:curry(fun maps:remove/2))(query)
-      , ((futil:curry(fun maps:put/3))(sub_items))(Articles)
-      ]);
-
-do_content_item
-( #{ link := Link
-
-do_subitems(SubItems) when is_list(SubItems) ->
-    lists:map
-      ( fun do_content_item/1
-      , SubItems
-      ).
+    case get(LinkID) of
+        undefined ->
+            put(LinkID, ResolvedContentItem);
+        _ ->
+            error(duplicate_link, [LinkID])
+    end,
+    ResolvedContentItem.
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
