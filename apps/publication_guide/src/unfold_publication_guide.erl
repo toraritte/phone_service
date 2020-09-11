@@ -1,10 +1,15 @@
--module(lofa).
+-module(unfold_publication_guide).
 -export([do_content_item/1]).
 
-do_content_item( #{} = ContentItem) ->
+do(PublicationGuide) ->
+
+do_content_item
+( #{} = ContentItem
+, #{} = Links
+)
+->
     futil:pipe(
-      [ ContentItem
-      , fun resolve_content_item/1
+      [ resolve_content_item(ContentItem, Links)
       , fun save_links/1
       ]).
 
@@ -60,10 +65,42 @@ resolve_content_item(#{ query := _Query } = QueryItem) ->
 
 resolve_content_item(#{ link_to := LinkID } = ContentItem) ->
 
-    case get(LinkID) of
-        undefined  ->
-            ContentItem;
-        LinkedItem ->
+    case { get(LinkID)
+         , ContentItem
+         }
+    of
+        % This means that the provided `LinkID` to a `link_to`
+        % map is  invalid as it  could not be resolved  in two
+        % passes - meaning it does not exist.
+        { undefined
+        , #{ link_to_id := _ }
+        }
+        ->
+            error(wrong_link_id, [ContentItem]);
+
+        % The `link_to` map could not be resolve during first
+        % pass; `LinkID` may show up later.
+        { undefined
+        , _
+        }
+        ->
+            LinkToID = erlang:make_ref(),
+            put({link_to, LinkToID}, whatever),
+            ContentItem#{ link_to_id => LinkToID };
+
+        % Link could only be resolved in the second pass.
+        { LinkedItem
+        , #{ link_to_id := LinkToID }
+        }
+        ->
+            erase({link_to, LinkToID}),
+            LinkedItem;
+
+        % Link resolved on first pass.
+        { LinkedItem
+        , _
+        }
+        ->
             LinkedItem
     end;
 
@@ -72,21 +109,29 @@ resolve_content_item(#{} = ContentItem) ->
 
 save_links
 ( #{ link_id := LinkID } = ResolvedContentItem
+, #{} = Links
 )
 ->
     SanitizedItem =
         maps:remove(link_id, ResolvedContentItem),
 
-    % logger:notice(#{ save_links => get(LinkID), sanitized_item => SanitizedItem, link_id => LinkID }),
-    case get(LinkID) of
-        undefined ->
-            put(LinkID, SanitizedItem);
-        _ ->
-            error(duplicate_link, [ResolvedContentItem])
-    end,
-    SanitizedItem;
+    NewLinks =
+        case get(LinkID) of
+            undefined ->
+                maps:put(LinkID, SanitizedItem, Links);
+            _ ->
+                error(duplicate_link, [ResolvedContentItem])
+        end,
 
-save_links(#{} = ContentItem) ->
-    ContentItem.
+    { SanitizedItem
+    , Links
+    };
 
-linkto_count(increase)
+save_links
+( #{} = ContentItem
+, #{} = Links
+)
+->
+    { ContentItem
+    , Links
+    };

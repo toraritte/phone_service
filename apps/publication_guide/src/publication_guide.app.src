@@ -1,11 +1,11 @@
 { application
 , publication_guide
 , [ { description
-    , "Content  storage   and  organization"
-      "in  a hierarchical  digraph for  the"
-      "`phone_service` IVR"
+    , ""
     }
   , {vsn, "0.1.0"}
+  % Is this needed for a lib?
+  % {mod, {publication_guide_app, []}},
   , {registered, []}
 
   , { applications

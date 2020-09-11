@@ -217,7 +217,7 @@ draw_content_graph([]) ->
 draw_content_graph(PublicationGuide) ->
 
     UnfoldedPubGuide =
-        unfold_publication_guide(PublicationGuide),
+        unfold_publication_guide:do(PublicationGuide),
     % { RootContentItem
     % , [_|_] = RootItems
     % } =
@@ -777,6 +777,8 @@ publication_guide() -> % {{-
      , title => "Main menu"
      , sub_items =>
        [ #{ link_to => "week-29" }
+     % , #{ link_to => "non-existent" } % WORKS
+       , #{ link_to => "week-30" }
        , #{ link_to => "week-30" }
        , #{ type => category
           , title =>  "Store sales advertising"
@@ -800,6 +802,7 @@ publication_guide() -> % {{-
                          , link_id => "week-30"
                          , query => {issue, "week-30"}
                          }
+                      , #{ link_to => "raleys" }
                       ]
                     }
                  , #{ type => publication
@@ -1584,82 +1587,6 @@ merge_dir_options
             , SubItemDirOptions ++ DirOptions
             }
     end.
-
-do_content_item( #{} = ContentItem) ->
-    futil:pipe(
-      [ ContentItem
-      , fun resolve_content_item/1
-      , fun save_links/1
-      ]).
-
-resolve_content_item
-( #{ sub_items := _
-   % `ContentItem`s with `sub_items` key should have a title, because it is not expandable, unlike queries and links. Therefore, if it is missing, that is a user error.
-   , title := Title
-   } = ContentItem
-)
-->
-    DoSubItems =
-        lists:map
-          ( fun do_content_item/1
-          , SubItems
-          ),
-
-    maps:update_with
-      ( sub_items
-      , DoSubItems
-      , ContentItem
-      );
-
-% resolve_content_item
-% ( #{ query := Query } = QueryItem
-% )
-% ->
-%     % Result = [ Article ]
-%     % Article = #{ title => String
-%     %            , path  => Path
-%     %            , publication => String
-%     %            , issue => String (?)
-%     %            , ...
-%     %            }
-%     % Path = URL | FilesystemPath
-
-%     % (See note at "% QUERY" comment.)
-%     [ #{ publication := Publication } | _ ] =
-%     Result =
-%         content_storage_api:query(Query),
-
-%     Articles =
-%         lists:map
-%           ( fun(Item) -> maps:put(type, article, Item) end
-%           , Result
-%           ),
-
-%     futil:pipe(
-%       [ QueryItem
-%       % Use the title of the `QueryItem` if none speficied in the publication guide
-%       , (futil:curry(fun maps:merge/2))(#{ title => Publication })
-%       , (futil:curry(fun maps:remove/2))(query)
-%       , ((futil:curry(fun maps:put/3))(sub_items))(Articles)
-%       ]);
-
-resolve_content_item(#{ link_to := LinkID }) ->
-    get(LinkID);
-
-resolve_content_item(#{} = ContentItem) ->
-    ContentItem.
-
-save_links
-( #{ link_id := LinkID } = ResolvedContentItem
-)
-->
-    case get(LinkID) of
-        undefined ->
-            put(LinkID, ResolvedContentItem);
-        _ ->
-            error(duplicate_link, [LinkID])
-    end,
-    ResolvedContentItem.
 
 % vim: set fdm=marker:
 % vim: set foldmarker={{-,}}-:
