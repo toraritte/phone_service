@@ -1,0 +1,24 @@
+{ application
+, publication_guide
+, [ { description
+    , ""
+    }
+  , {vsn, "0.1.0"}
+  % {mod, {publication_guide_app, []}},
+  , {registered, []}
+
+  , { applications
+    , [ kernel
+      , stdlib
+      % Storage API, using the backend configured in ./publication_guide.app.erl
+      , content_storage
+      , futil
+      ]
+    }
+
+  , {env,[]}
+  , {modules, []}
+  , {licenses, ["Apache 2.0"]}
+  , {links, []}
+  ]
+}.

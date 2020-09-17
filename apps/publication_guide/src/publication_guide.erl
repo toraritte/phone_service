@@ -779,6 +779,7 @@ publication_guide() -> % {{-
        [ #{ link_to => "week-29" }
      % , #{ link_to => "non-existent" } % WORKS
        , #{ link_to => "week-30" }
+       , #{ link_to => "safeway" }
        , #{ link_to => "week-30" }
        , #{ type => category
           , title =>  "Store sales advertising"

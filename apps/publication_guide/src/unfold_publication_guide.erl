@@ -1,26 +1,43 @@
 -module(unfold_publication_guide).
 -export([do_content_item/1]).
 
-do(PublicationGuide) ->
+do(#{} = PublicationGuide) ->
+    
+    futil:pipe(
+      [ { PublicationGuide, #{} }
+      , fun do_content_item/1
+      , fun do_content_item/1
+      ]).
 
 do_content_item
-( #{} = ContentItem
-, #{} = Links
+( { #{} = _ContentItem
+  , #{} = _Links
+  } = T
 )
 ->
     futil:pipe(
-      [ resolve_content_item(ContentItem, Links)
+      [ T
+      , fun resolve_content_item/1
       , fun save_links/1
       ]).
 
-resolve_content_item(#{ sub_items := _ } = ContentItem) ->
+resolve_content_item
+( { #{ sub_items := _ } = ContentItem
+  , #{} = Links
+  }
+)
+->
     DoSubItems =
-        (futil:curry(fun lists:map/2))
-          (fun do_content_item/1),
+        % (futil:curry(fun lists:map/2))
+        %   (fun do_content_item/1),
         % OR
-        % fun(SubItem) ->
-        %     lists:map(fun do_content_item/1, SubItem)
-        % end,
+        fun(SubItems) ->
+            DoItem =
+                fun(SubContentItem) ->
+                    do_content_item({ SubContentItem, Links })
+                end
+            lists:map(DoItem, SubItems)
+        end,
 
     maps:update_with
       ( sub_items
@@ -109,29 +126,19 @@ resolve_content_item(#{} = ContentItem) ->
 
 save_links
 ( #{ link_id := LinkID } = ResolvedContentItem
-, #{} = Links
 )
 ->
     SanitizedItem =
         maps:remove(link_id, ResolvedContentItem),
 
-    NewLinks =
-        case get(LinkID) of
-            undefined ->
-                maps:put(LinkID, SanitizedItem, Links);
-            _ ->
-                error(duplicate_link, [ResolvedContentItem])
-        end,
+    % logger:notice(#{ save_links => get(LinkID), sanitized_item => SanitizedItem, link_id => LinkID }),
+    case get(LinkID) of
+        undefined ->
+            put(LinkID, SanitizedItem);
+        _ ->
+            error(duplicate_link, [ResolvedContentItem])
+    end,
+    SanitizedItem;
 
-    { SanitizedItem
-    , Links
-    };
-
-save_links
-( #{} = ContentItem
-, #{} = Links
-)
-->
-    { ContentItem
-    , Links
-    };
+save_links(#{} = ContentItem) ->
+    ContentItem.
