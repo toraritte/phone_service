@@ -773,12 +773,16 @@ publication_guide() -> % {{-
 % + linking is also expanded on the storage_api level
 % TODO linear queries? use digraph's ETS tables
 publication_guide() -> % {{-
+% 133> c("apps/publication_guide/src/unfold_publication_guide.erl").
+% {ok,unfold_publication_guide}
+% 134> unfold_publication_guide:do(R).                              
     #{ type => category
      , title => "Main menu"
      , sub_items =>
        [ #{ link_to => "week-29" }
      % , #{ link_to => "non-existent" } % WORKS
        , #{ link_to => "week-30" }
+       , #{ link_to => "drugs" }
        , #{ link_to => "safeway" }
        , #{ link_to => "week-30" }
        , #{ type => category
@@ -804,6 +808,7 @@ publication_guide() -> % {{-
                          , query => {issue, "week-30"}
                          }
                       , #{ link_to => "raleys" }
+                      , #{ link_to => "drugs" }
                       ]
                     }
                  , #{ type => publication
@@ -816,11 +821,14 @@ publication_guide() -> % {{-
                }
             , #{ type => category
                , title =>  "Drug stores"
+               , link_id => "drugs"
                , sub_items =>
                % LINKS
                % Always refer to the title. In the case of "Raley's" below, it means it has to match the title once it has been expanded above, but the `{query, ...}` syntax is probably less error prone, and it could be used at any time.
                  [ #{ link_to => "safeway" }
                  , #{ link_to => "raleys" }
+                 % This should fail, and it does (because why would one include a link to the current section?)
+                 % , #{ link_to => "drugs" } % WORKS (as in, it fails)
                % or
                % , #{ type => publication
                %    , query => {path_ref, "raleys"
