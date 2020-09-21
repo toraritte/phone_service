@@ -72,92 +72,124 @@ do(#{} = PublicationGuide) ->
 % I wonder how this would have been done in Haskell or
 % PureScript  because  there is  definitely  something
 % monadic going on
--spec do_item({ content_item(), links() })
-           -> { content_item(), links() }.
-do_item
-( { #{} = ContentItem
-  , #{} = Links
-  }
-)
-->
-    logger:notice(#{ a => do_item, item => maps:remove(sub_items, ContentItem)})
-,   futil:pipe(
-      [ ContentItem
-      , (futil:cflip(fun validate_item/2))
-          (?ITEM_KEY_PROCESS_ORDER)
-      , ((futil:curry(fun do_item_row/3))
-          (?ITEM_KEY_PROCESS_ORDER))(Links)
-      ])
-.
+% -spec do_item({ content_item(), links() })
+%            -> { content_item(), links() }.
+% do_item
+% ( { #{} = ContentItem
+%   , RowCallbacks
+%   % , #{} = Links
+%   }
+% )
+% ->
+%     % logger:notice(#{ a => do_item, item => maps:remove(sub_items, ContentItem)})
+%     do_item_rows(RowCallbacks, ContentItem)
+% % ,   futil:pipe(
+% %       [ ContentItem
+% %       , ((futil:curry(fun do_item_rows/3))
+% %           (RowProcessOrder))(RowCallbacks)
+% %           % (?ITEM_KEY_PROCESS_ORDER))(Links)
+% %       ])
+% .
 
-% TODO
+% TODO validate {{-
 % Take  if   further  to  validate   specific  content
 % item  types  (viz., `article`,  `collection_type()`,
 % `regular_item()`, `resolve_item()`)?
--spec validate_item( content_item(), list(atom()) )
-      -> content_item() | no_return().
-validate_item(ContentItem, KeyProcessOrder) -> % {{-
+% NOTE Decomissioning for now.
+% Too restrictive;  queries may return maps  with keys
+% not in the allowed list so this module would have to
+% evolve  with  external  modules. Instead  it  should
+% validate item types based on their restrictions (see
+% todo note above.
+% -spec validate_item( content_item(), list(atom()) )
+%       -> content_item() | no_return().
+% validate_item(ContentItem, KeyProcessOrder) -> % {{-
 
-    ItemKeysSet =
-        futil:pipe(
-          [ ContentItem
-          , fun maps:keys/1
-          , fun sets:from_list/1
-          ])
+%     ItemKeysSet =
+%         futil:pipe(
+%           [ ContentItem
+%           , fun maps:keys/1
+%           , fun sets:from_list/1
+%           ])
 
-,   KeyProcessOrderSet =
-        sets:from_list(KeyProcessOrder)
+% ,   KeyProcessOrderSet =
+%         sets:from_list(KeyProcessOrder)
 
-,   Diff =
-        futil:pipe(
-          [ sets:subtract(ItemKeysSet, KeyProcessOrderSet)
-          , fun sets:to_list/1
-          ])
+% ,   Diff =
+%         futil:pipe(
+%           [ sets:subtract(ItemKeysSet, KeyProcessOrderSet)
+%           , fun sets:to_list/1
+%           ])
 
-,   case Diff of
-        [] ->
-            ContentItem
-    ;   Other ->
-            error(invalid_item_key, Other)
-    end
-.
+% ,   case Diff of
+%         [] ->
+%             ContentItem
+%     ;   Other ->
+%             error(invalid_item_key, Other)
+%     end
+% .
+% }}-
 % }}-
 
-do_item_row % {{-
-( [ItemKey|Rest] = R
-, #{} = Links
+do_item
+( #{} = ContentItem
+  , RowCallback
+  , Acc
+)
+->
+    RowProcessOrder =
+        proplists:get_keys(RowCallback),
+
+,   do_item_rows
+      ( RowProcessOrder
+      , RowCallback
+      , Acc
+      , ContentItem
+      )
+.
+
+do_item_rows % {{-
+( [ItemKey|Rest]
+, RowCallback
+, Acc
 , #{} = ContentItem
 )
 ->
-    logger:notice(#{ a => do_item_row, item => maps:remove(sub_items, ContentItem), rows => R})
+    % logger:notice(#{ a => do_item_rows, item => maps:remove(sub_items, ContentItem), rows => R})
 ,   { NewContentItem
-    , NewLinks
+    , NewAcc
+    % , NewLinks
     } =
         futil:pipe
           ([ ItemKey
            , (futil:cflip(fun proplists:lookup/2))
                (maps:to_list(ContentItem))
-           % , fun(X) -> logger:notice(#{ a => do_item_row, row => X}), X end
+           % -> { ItemKey, Value } | none
+           % , fun(X) -> logger:notice(#{ a => do_item_rows, row => X}), X end
            % `Row` is a `{key, Value}` in `ContentItem`
-           , fun(Row) -> resolve_item(Row, ContentItem, Links) end
-           % , fun(X) -> logger:notice(#{ a => do_item_row, resolved_item => X}), X end
+           , fun(Row) -> RowCallback(Row, ContentItem, Acc) end
+           % , fun(Row) -> resolve_item(Row, ContentItem, Links) end
+           % , fun(X) -> logger:notice(#{ a => do_item_rows, resolved_item => X}), X end
            ])
 
-,   do_item_row
+,   do_item_rows
       ( Rest
-      , NewLinks
+      , NewAcc
+      % , NewLinks
       , NewContentItem
       )
 ;
 
 % }}-
-do_item_row % {{-
+do_item_rows % {{-
 ( []
-, #{} = Links
+, Acc
+% , #{} = Links
 , #{} = ContentItem
 )
 ->
-    { ContentItem, Links }
+    { ContentItem, Acc }
+    % { ContentItem, Links }
 .
 % }}-
 
