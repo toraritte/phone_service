@@ -19,6 +19,7 @@
    ]
  ).
 
+-type link_id() :: string().
 -type query() :: id | issue | path_ref.
 -type collection_type() :: category | publication | section.
 -type article() :: #{ type        := article
@@ -30,7 +31,7 @@
                     }.
 -type regular_item() :: #{ type := collection_type()
                          , title     => string()
-                         , link_id   => string()
+                         , link_id   => link_id()
                          % TODO Is this allowed?
                          , sub_items => list(content_item())
                          , query     => { query(), string() }
@@ -46,26 +47,57 @@
 -type content_item() :: regular_item() | link_item() | article().
 -type publication_guide() :: regular_item().
 
--type links() :: #{ string() => content_item()
-                  , { link_to, reference() } => string()
-                  }.
+% -type links() :: #{ string() => content_item()
+%                   , { link_to, reference() } => string()
+%                   }.
+
+% -type link_to_id() :: { link_to, reference() }.
+% -type link_tos() :: list({ link_to_id(), link_id() }).
+-type links() :: list({ link_id(), content_item() }).
+-type queries() :: proplists:proplist().
+-type acc() :: { links(), queries() }.
+
+-type item_row() :: proplists:property().
+-type row_callback() :: fun
+                        ( ( item_row()
+                          , content_item()
+                          , acc()
+                          )
+                          -> { content_item()
+                             , acc()
+                             }
+                        ).
 
 % TODO there is something monadic going on, but need to do more research
 -spec do( publication_guide() ) -> resolved_item().
 do(#{} = PublicationGuide) ->
 
-    futil:pipe(
+    collect_links_and_queries
+    expand_links_and_queries
+
+    Collect =
+        lists:map
+          ( fun(Key) -> { Key, fun collect_links_and_queries/4 } end
+          , [ query, link_id ]
+          )
+
+,   Expand =
+        lists:map
+          ( fun(Key) -> { Key, fun expand_links_and_queries/4 } end
+          , [ query, link_to ]
+          )
+
+,   futil:pipe(
       [ { PublicationGuide
-        , #{} % Links
+        , { [], [] } % = Acc
         }
-      % Two runs to make sure all links are resolved
       % , fun(X) -> logger:notice(#{ a => "run ONE", b => X }), X end
       , fun(X) -> logger:notice(#{ a => "run ONE"}), X end
-      , fun do_item/1
+      , (futil:curry(fun do_item/2))(Collect)
       % , fun(X) -> logger:notice(#{ a => "run TWO", b => X }), X end
       , fun(X) -> logger:notice(#{ a => "run TWO"}), X end
-      , fun do_item/1
-      , (futil:curry(fun erlang:element/2))(1)
+      , (futil:curry(fun do_item/2))(Expand)
+      % , (futil:curry(fun erlang:element/2))(1)
       ])
 .
 
@@ -82,10 +114,10 @@ do(#{} = PublicationGuide) ->
 % )
 % ->
 %     % logger:notice(#{ a => do_item, item => maps:remove(sub_items, ContentItem)})
-%     do_item_rows(RowCallbacks, ContentItem)
+%     iterate_item_rows(RowCallbacks, ContentItem)
 % % ,   futil:pipe(
 % %       [ ContentItem
-% %       , ((futil:curry(fun do_item_rows/3))
+% %       , ((futil:curry(fun iterate_item_rows/3))
 % %           (RowProcessOrder))(RowCallbacks)
 % %           % (?ITEM_KEY_PROCESS_ORDER))(Links)
 % %       ])
@@ -132,83 +164,109 @@ do(#{} = PublicationGuide) ->
 % }}-
 
 do_item
-( #{} = ContentItem
-  , RowCallback
+( RowCallbacks
+, { #{} = ContentItem
   , Acc
+  }
 )
+when is_list(RowCallbacks)
 ->
-    RowProcessOrder =
-        proplists:get_keys(RowCallback),
-
-,   do_item_rows
-      ( RowProcessOrder
-      , RowCallback
+    iterate_item_rows
+      ( [ { sub_items, fun sub_items/3 }
+        | RowCallbacks
+        ]
       , Acc
       , ContentItem
       )
 .
 
-do_item_rows % {{-
-( [ItemKey|Rest]
-, RowCallback
-, Acc
+% -spec iterate_item_rows
+%       ( list( atom() )
+%       , row_callback()
+%       , acc()
+%       , content_item()
+%       )
+%       -> { content_item()
+%          , acc()
+%          }.
+iterate_item_rows % {{-
+( [ { CallbackKey, RowFunction }
+  | RestCallbacks
+  ]
+  = RowCallbacks
+, { Links
+  , Queries
+  }
+  = Acc
 , #{} = ContentItem
 )
 ->
-    % logger:notice(#{ a => do_item_rows, item => maps:remove(sub_items, ContentItem), rows => R})
-,   { NewContentItem
+    { NewContentItem
     , NewAcc
-    % , NewLinks
     } =
-        futil:pipe
-          ([ ItemKey
-           , (futil:cflip(fun proplists:lookup/2))
-               (maps:to_list(ContentItem))
-           % -> { ItemKey, Value } | none
-           % , fun(X) -> logger:notice(#{ a => do_item_rows, row => X}), X end
-           % `Row` is a `{key, Value}` in `ContentItem`
-           , fun(Row) -> RowCallback(Row, ContentItem, Acc) end
-           % , fun(Row) -> resolve_item(Row, ContentItem, Links) end
-           % , fun(X) -> logger:notice(#{ a => do_item_rows, resolved_item => X}), X end
-           ])
+        case maps:take(CallbackKey, ContentItem) of
 
-,   do_item_rows
-      ( Rest
+            { RowValue, ContentItemSansRow } ->
+
+                RowFunction
+                  ( { CallbackKey, RowValue } % = Row
+                  , RowCallbacks
+                  , ContentItem
+                  , Acc
+                  )
+
+        % When key is not found, it means that
+        % 1. the row doesn't need to be processed, or
+        % 2. there is a typo in `CallbackKey` in `RowCallbacks`
+        ;   error ->
+                { ContentItem, Acc }
+        end
+
+,   iterate_item_rows
+      ( RestCallbacks
       , NewAcc
-      % , NewLinks
       , NewContentItem
       )
 ;
 
 % }}-
-do_item_rows % {{-
+iterate_item_rows % {{-
 ( []
+, _RowCallbacks
 , Acc
-% , #{} = Links
 , #{} = ContentItem
 )
 ->
     { ContentItem, Acc }
-    % { ContentItem, Links }
 .
 % }}-
 
-resolve_item({ sub_items, SubItems }, ContentItem, Links) -> % {{-
-
-    { NewSubItems
-    , NewLinks
-    } =
-        do_subitems(SubItems, [], Links)
-
-,   NewContentItem =
-        ContentItem#{ sub_items => NewSubItems }
-
-,    { NewContentItem, NewLinks }
+% -spec collect_links_and_queries
+%       ( { sub_items
+%         , list( content_item() )
+%         }
+%       , content_item()
+%       , acc()
+%       )
+%       ->
+collect_links_and_queries
+( { sub_items, SubItems } = Row
+, ContentItem
+, { Links, Queries } = Acc
+)
+->
+    sub_items
+      ( Row
+      , fun collect_links_and_queries/3
+      , ContentItem
+      , Acc
+      )
 ;
 
 % }}-
 % Probably bad, but assuming that every query returns a list of articles, and that they all belong to the same publication.
-resolve_item({ query, _Query }, ContentItem, Links) -> % {{-
+collect_links_and_queries
+( { query, _Query }, ContentItem, Links) -> % {{-
     % Result = [ Article ]
     % Article = #{ title => String
     %            , path  => Path
@@ -328,7 +386,7 @@ resolve_item({ link_to, LinkID }, ContentItem, Links) -> % {{-
 ;
 
 % }}-
-resolve_item({ link_id, LinkID }, ContentItem, Links) -> % {{-
+collect_links_and_queries({ link_id, LinkID }, ContentItem, Links) -> % {{-
     logger:notice(#{ link_id => LinkID, links => Links}),
 
     SanitizedItem =
@@ -360,23 +418,37 @@ resolve_item(_, ContentItem, Links) -> % {{-
 .
 % }}-
 
-do_subitems([ContentItem|Rest], Acc, #{} = Links) ->
+sub_items({ sub_items, SubItems }, RowCallbacks, ContentItem, Acc) -> % {{-
+
+    { NewSubItems
+    , NewAcc
+    } =
+        do_subitems(SubItems, RowCallbacks, [], Acc)
+
+,   NewContentItem =
+        ContentItem#{ sub_items => NewSubItems }
+
+,   { NewContentItem, NewLinks }
+.
+
+do_subitems([ContentItem|RestItems], RowCallbacks, SubItemAcc, Acc) ->
 
     { NewContentItem
-    , NewLinks
+    , NewAcc
     } =
-        do_item({ ContentItem, Links })
+        do_item({ ContentItem, RowCallbacks, Acc })
 
 ,   do_subitems
-      ( Rest
-      , [NewContentItem|Acc]
-      , NewLinks
+      ( RestItems
+      , RowCallbacks
+      , [NewContentItem|SubItemAcc]
+      , NewAcc
       )
 ;
 
-do_subitems([], Acc, #{} = Links) ->
-    { lists:reverse(Acc)
-    , Links
+do_subitems([], _RowCallback, SubItemAcc, #{} = Acc) ->
+    { lists:reverse(SubItemAcc)
+    , Acc
     }
 .
 
