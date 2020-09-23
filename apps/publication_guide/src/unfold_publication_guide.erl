@@ -20,7 +20,7 @@
  ).
 
 -type link_id() :: string().
--type query() :: id | issue | path_ref.
+% -type query() :: id | issue | path_ref.
 -type collection_type() :: category | publication | section.
 -type article() :: #{ type        := article
                     , title       := string()
@@ -34,7 +34,8 @@
                          , link_id   => link_id()
                          % TODO Is this allowed?
                          , sub_items => list(content_item())
-                         , query     => { query(), string() }
+                         % , query     => { query(), string() }
+                         , query     => term()
                          }.
 -type resolved_item() :: #{ type  := collection_type()
                           , title := string()
@@ -51,29 +52,26 @@
 %                   , { link_to, reference() } => string()
 %                   }.
 
-% -type link_to_id() :: { link_to, reference() }.
-% -type link_tos() :: list({ link_to_id(), link_id() }).
+-type link_to_id() :: { link_to, reference() }.
+% A  `link_id` can  be reused  multiple times,  and so
+% `link_to`s need  to be  tracked somehow  whether the
+% `publication_guide()`  got fully  resolved. (Queries
+% on the other  hand are standalone, even  if the same
+% query is used multiple times.)
+-type link_tos() :: list({ link_to_id(), link_id() }).
 -type links() :: list({ link_id(), content_item() }).
--type queries() :: proplists:proplist().
--type acc() :: { links(), queries() }.
+% -type queries() :: proplists:proplist().
+% TODO Not sure how queries will look like
+-type queries() :: list( any() )
+-type acc() :: { links(), link_tos(), queries() }.
 
 -type item_row() :: proplists:property().
--type row_callback() :: fun
-                        ( ( item_row()
-                          , content_item()
-                          , acc()
-                          )
-                          -> { content_item()
-                             , acc()
-                             }
-                        ).
+-type row_callback() :: fun( ( item_row(), content_item(), acc() )
+                          -> { content_item(), acc() }).
 
 % TODO there is something monadic going on, but need to do more research
 -spec do( publication_guide() ) -> resolved_item().
 do(#{} = PublicationGuide) ->
-
-    collect_links_and_queries
-    expand_links_and_queries
 
     Collect =
         lists:map
@@ -204,9 +202,9 @@ iterate_item_rows % {{-
     { NewContentItem
     , NewAcc
     } =
-        case maps:take(CallbackKey, ContentItem) of
+        case maps:get(CallbackKey, ContentItem, undefined) of
 
-            { RowValue, ContentItemSansRow } ->
+            RowValue ->
 
                 RowFunction
                   ( { CallbackKey, RowValue } % = Row
@@ -218,7 +216,8 @@ iterate_item_rows % {{-
         % When key is not found, it means that
         % 1. the row doesn't need to be processed, or
         % 2. there is a typo in `CallbackKey` in `RowCallbacks`
-        ;   error ->
+        %    TODO Implement a validation function.
+        ;   undefined ->
                 { ContentItem, Acc }
         end
 
@@ -249,24 +248,19 @@ iterate_item_rows % {{-
 %       , acc()
 %       )
 %       ->
+% All queries are article  queries, and these could be
+% from the same publication  or by a certain criteria,
+% such as  having the same tag(s).  (Requesting a list
+% of  publications would  make their  order undefined,
+% and  that is  something  listeners rely  on, but  it
+% could not be guaranteed among restarts.)
 collect_links_and_queries
-( { sub_items, SubItems } = Row
+( { query, Query }
+, _RowCallbacks
 , ContentItem
-, { Links, Queries } = Acc
+, { _Links, _LinkTos, Queries }
 )
-->
-    sub_items
-      ( Row
-      , fun collect_links_and_queries/3
-      , ContentItem
-      , Acc
-      )
-;
-
-% }}-
-% Probably bad, but assuming that every query returns a list of articles, and that they all belong to the same publication.
-collect_links_and_queries
-( { query, _Query }, ContentItem, Links) -> % {{-
+-> % {{-
     % Result = [ Article ]
     % Article = #{ title => String
     %            , path  => Path
@@ -428,7 +422,7 @@ sub_items({ sub_items, SubItems }, RowCallbacks, ContentItem, Acc) -> % {{-
 ,   NewContentItem =
         ContentItem#{ sub_items => NewSubItems }
 
-,   { NewContentItem, NewLinks }
+,   { NewContentItem, NewAcc }
 .
 
 do_subitems([ContentItem|RestItems], RowCallbacks, SubItemAcc, Acc) ->
@@ -436,12 +430,12 @@ do_subitems([ContentItem|RestItems], RowCallbacks, SubItemAcc, Acc) ->
     { NewContentItem
     , NewAcc
     } =
-        do_item({ ContentItem, RowCallbacks, Acc })
+        do_item(RowCallbacks, { ContentItem, Acc })
 
 ,   do_subitems
       ( RestItems
       , RowCallbacks
-      , [NewContentItem|SubItemAcc]
+      , [ NewContentItem|SubItemAcc ]
       , NewAcc
       )
 ;
