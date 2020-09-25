@@ -73,13 +73,17 @@
 % -spec do( publication_guide() ) -> resolved_item().
 do(#{} = PublicationGuide) ->
 
-    Collect =
-        [ { query,   fun collect/4 }
-        , { link_id, fun collect/4 }
+    FirstRun =
+        [ { sub_items, fun sub_items/4 }
+        , { query,   fun collect_queries/4 }
+        % These are mutually exclusive.
+        , { link_id, fun collect_link_ids/4 }
+        % , { link_to, fun expand_link_tos/4 }
         ]
 
-,   Expand =
-        [ { link_to, fun expand/4 }
+,   SecondRun =
+        [ { sub_items, fun sub_items/4 }
+        , { link_to, fun expand/4 }
         , { query,   fun expand/4 }
         ]
 
@@ -90,11 +94,11 @@ do(#{} = PublicationGuide) ->
            } % = Acc
         }
       , fun(X) -> logger:notice(#{ a => "run ONE"}), X end
-      , (futil:curry(fun do_item/2))(Collect)
-      , fun(X) -> logger:notice(#{ a => "run TWO"}), X end
-      , (futil:curry(fun do_item/2))(Expand)
+      , (futil:curry(fun do_item/2))(FirstRun)
+      % , fun(X) -> logger:notice(#{ a => "run TWO"}), X end
+      % , (futil:curry(fun do_item/2))(SecondRun)
       % , fun(X) -> logger:notice(#{ a => "run THREE"}), X end
-      % , (futil:curry(fun do_item/2))(Expand)
+      % , (futil:curry(fun do_item/2))(SecondRun)
       ])
 .
 
@@ -168,10 +172,9 @@ do_item
 )
 when is_list(RowCallbacks)
 ->
-    iterate_item_rows
-      ( [ { sub_items, fun sub_items/4 }
-        | RowCallbacks
-        ]
+    logger:notice(#{ a => do_item, content_item => ContentItem })
+,   iterate_item_rows
+      ( RowCallbacks
       , Acc
       , ContentItem
       )
@@ -192,7 +195,8 @@ iterate_item_rows % {{-
 , #{} = ContentItem
 )
 ->
-    { NewContentItem
+    logger:notice(#{ a => iterate_item_rows, content_item => ContentItem, rowcallbacks => RowCallbacks })
+,   { NewContentItem
     , NewAcc
     } =
         case maps:get(CallbackKey, ContentItem, undefined) of
@@ -228,7 +232,8 @@ iterate_item_rows % {{-
 , #{} = ContentItem
 )
 ->
-    { ContentItem, Acc }
+    logger:notice(#{ a => iterate_item_rows, content_item => ContentItem})
+,   { ContentItem, Acc }
 .
 % }}-
 
@@ -247,7 +252,7 @@ iterate_item_rows % {{-
 % of  publications would  make their  order undefined,
 % and  that is  something  listeners rely  on, but  it
 % could not be guaranteed among restarts.)
-collect
+collect_queries
 ( { query, _ } = Query
 , _RowCallbacks
 , ContentItem
@@ -296,10 +301,10 @@ collect
 ,   { ContentItem
     , Acc#{ queries => QueryToResolve }
     }
-;
-
+.
 % }}-
-collect
+
+collect_link_ids
 ( { link_id, LinkID }
 , _RowCallbacks
 , ContentItem
@@ -364,10 +369,11 @@ expand
 ,   { NewContentItem
     , Acc
     }
-;
+.
+% }}-
 
 % }}-
-expand
+expand_link_tos
 ( { link_to, LinkID }
 , _RowCallbacks
 , ContentItem
@@ -375,19 +381,20 @@ expand
 )
 -> % {{-
 
-    #{ LinkID := LinkedItem  } = Links
-
-,   logger:notice(#{ content_item => ContentItem, linked_item => LinkedItem })
-% ,   { ContentItem
-,   { ContentItem
-    , Acc
-    }
+    logger:notice(#{ content_item => ContentItem, linked_item => maps:get(LinkID, Links, undefined) })
+,   case maps:get(LinkID, Links, undefined) of
+        undefined ->
+            { ContentItem, Acc }
+    ;   LinkedItem ->
+            { LinkedItem, Acc }
+    end
 .
 % }}-
 
 sub_items({ sub_items, SubItems }, RowCallbacks, ContentItem, Acc) -> % {{-
 
-    { NewSubItems
+    logger:notice(#{ a => sub_items, content_item => ContentItem })
+,   { NewSubItems
     , NewAcc
     } =
         do_subitems(SubItems, RowCallbacks, [], Acc)
@@ -400,7 +407,8 @@ sub_items({ sub_items, SubItems }, RowCallbacks, ContentItem, Acc) -> % {{-
 
 do_subitems([ContentItem|RestItems], RowCallbacks, SubItemAcc, Acc) ->
 
-    { NewContentItem
+    logger:notice(#{ a => do_subitems, content_item => ContentItem, acc => Acc, subitem_acc => SubItemAcc })
+,   { NewContentItem
     , NewAcc
     } =
         do_item(RowCallbacks, { ContentItem, Acc })
@@ -414,7 +422,8 @@ do_subitems([ContentItem|RestItems], RowCallbacks, SubItemAcc, Acc) ->
 ;
 
 do_subitems([], _RowCallback, SubItemAcc, #{} = Acc) ->
-    { lists:reverse(SubItemAcc)
+    logger:notice(#{ a => do_subitems, acc => Acc, subitem_acc => SubItemAcc })
+,   { lists:reverse(SubItemAcc)
     , Acc
     }
 .
