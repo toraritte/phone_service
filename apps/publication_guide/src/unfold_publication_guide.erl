@@ -78,7 +78,7 @@ do(#{} = PublicationGuide) ->
         , { query,   fun collect_queries/4 }
         % These are mutually exclusive.
         , { link_id, fun collect_link_ids/4 }
-        % , { link_to, fun expand_link_tos/4 }
+        , { link_to, fun expand_link_tos/4 }
         ]
 
 ,   SecondRun =
@@ -311,7 +311,8 @@ collect_link_ids
 , #{ links := Links } = Acc
 )
 -> % {{-
-    SanitizedItem =
+    logger:notice(#{ a => collect_link_ids, content_item => ContentItem, link_id => LinkID, links => Links })
+,   SanitizedItem =
         maps:remove(link_id, ContentItem)
 
 ,   NewLinks =
@@ -381,7 +382,7 @@ expand_link_tos
 )
 -> % {{-
 
-    logger:notice(#{ content_item => ContentItem, linked_item => maps:get(LinkID, Links, undefined) })
+    logger:notice(#{ a => expand_link_tos, content_item => ContentItem, linked_item => maps:get(LinkID, Links, undefined) })
 ,   case maps:get(LinkID, Links, undefined) of
         undefined ->
             { ContentItem, Acc }
@@ -451,19 +452,19 @@ testguide() ->
                       [ #{ type => section
                          , link_id => "week-29"
                          , title =>  "Week 7/15/2020 to 7/21/2020"
-                         , query => {issue, "week-29"}
+                         , query => #{ publication => safeway, issue => "week-29" }
                          }
                       , #{ type => section
                          , title =>  "Week 7/22/2020 to 7/28/2020"
                          , link_id => "week-30"
-                         , query => {issue, "week-30"}
+                         , query => #{ publication => safeway, issue => "week-30" }
                          }
                       , #{ link_to => "raleys" }
                       , #{ link_to => "drugs" }
                       ]
                     }
                  , #{ type => publication
-                    , query => {path_ref, "raleys"}
+                    , query => #{ publication => "raleys" }
                     , link_id => "raleys"
                     }
                   % , title => "Raley's"
