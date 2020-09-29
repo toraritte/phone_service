@@ -77,7 +77,7 @@ do(#{} = PublicationGuide) ->
     % and  decided to  always add  it explicitly  to avoid
     % surprises. It is depth first.
 
-    PhaseOneCallbacks =
+    SendQueriesAndCollectLinkIDs =
         [ { sub_items, fun sub_items/4 }
         , { query,   fun send_queries/4 }
         % These are mutually exclusive.
@@ -85,33 +85,30 @@ do(#{} = PublicationGuide) ->
         , { link_to, fun expand_link_tos/4 }
         ]
 
-,    Acc =
+,   ClearLinks =
+        proplists:delete(query, SendQueriesAndCollectLinkIDs)
+
+% ,   SecondRun =
+%         [ { sub_items, fun sub_items/4 }
+%         , { link_to, fun expand/4 }
+%         , { query,   fun expand/4 }
+%         ]
+
+,   Acc =
         #{ links    => #{}
          , link_found => false
          , queries  => #{}
          }
 
-,   SecondRun =
-        [ { sub_items, fun sub_items/4 }
-        , { link_to, fun expand/4 }
-        , { query,   fun expand/4 }
-        ]
-
 ,   futil:pipe(
       [ { PublicationGuide
         , Acc
         }
-      , fun(X) -> logger:notice(#{ a => "run ONE"}), X end
-      , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
-      , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
-      , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
-      , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
-      , fun({P,_}) ->
-                R = io_lib:format("~p",[P]),
-                S = lists:flatten(R),
-                length(string:split(S, "link_to")) =:= 1
-        end
-
+      % , fun(X) -> logger:notice(#{ a => "run ONE"}), X end
+      , (futil:curry(fun do_item/2))(SendQueriesAndCollectLinkIDs)
+      , (futil:curry(fun clear_links/2))(ClearLinks)
+      % , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
+      % , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
       % , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
       % , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
       % , (futil:curry(fun clear_links/2))(PhaseOneCallbacks)
@@ -124,38 +121,49 @@ do(#{} = PublicationGuide) ->
 
 % c("apps/publication_guide/src/unfold_publication_guide.erl"), f(), A =  unfold_publication_guide:do(unfold_publication_guide:testguide()), A.
 
-% clear_links
-% ( PhaseOneCallbacks
-% , { PublicationGuide
-%   , Acc }
-% )
-% ->
-%     clear_links(P, T, { link_found, )
-% ;
+clear_links
+( R = _RowCallbacks
+, T = { ContentItem, _Acc }
+)
+->
+    AreResolved =
+        futil:pipe(
+          [ [ ContentItem ]
+          , (futil:curry(fun io_lib:format/2))("~p")
+          , fun lists:flatten/1
+          , (futil:cflip(fun string:split/2))("link_to")
+          , fun erlang:length/1
+          , (futil:curry(fun erlang:'=:='/2))(1)
+          ])
+    % R = io_lib:format("~p",[P]),
+    % S = lists:flatten(R),
+    % length(string:split(S, "link_to")) =:= 1
+,   clear_links(R, T, { all_links_resolved, AreResolved })
+.
 
-% clear_links
-% ( PhaseOneCallbacks
-% , { PublicationGuide, Acc }
-% )
-% ->
-%     NewLinks =
-%         maps:map
-%           ( fun( _CallbackKey, ContentItem ) ->
-%                 futil:pipe(
-%                   [ { ContentItem
-%                     , Acc
-%                     }
-%                   , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
-%                   , (futil:curry(fun erlang:element/2))(1)
-%                   ])
-%             end
-%           , Links
-%           )
+% Not checks for infinite loops!
+clear_links
+( _RowCallbacks
+, { _ContentItem, _Acc } = T
+, { all_links_resolved, true }
+)
+->
+    T
+;
 
-% ,   { PublicationGuide
-%     , Acc#{ links => NewLinks }
-%     }
-% .
+clear_links
+( RowCallbacks
+, { _ContentItem, _Acc } = T
+, { all_links_resolved, false }
+)
+->
+    futil:pipe(
+      [ T
+      , (futil:curry(fun do_item/2)    )(RowCallbacks)
+      , (futil:curry(fun clear_links/2))(RowCallbacks)
+      ])
+.
+
 % I wonder how this would have been done in Haskell or
 % PureScript  because  there is  definitely  something
 % monadic going on
@@ -226,8 +234,8 @@ do_item
 )
 when is_list(RowCallbacks)
 ->
-    logger:notice(#{ a => do_item, content_item => ContentItem })
-,   iterate_item_rows
+    % logger:notice(#{ a => do_item, content_item => ContentItem })
+    iterate_item_rows
       ( RowCallbacks
       , Acc
       , ContentItem
@@ -249,8 +257,8 @@ iterate_item_rows % {{-
 , #{} = ContentItem
 )
 ->
-    logger:notice(#{ a => iterate_item_rows, content_item => ContentItem, rowcallbacks => RowCallbacks })
-,   { NewContentItem
+    % logger:notice(#{ a => iterate_item_rows, content_item => ContentItem, rowcallbacks => RowCallbacks })
+    { NewContentItem
     , NewAcc
     } =
         case maps:get(CallbackKey, ContentItem, undefined) of
@@ -286,8 +294,8 @@ iterate_item_rows % {{-
 , #{} = ContentItem
 )
 ->
-    logger:notice(#{ a => iterate_item_rows, content_item => ContentItem})
-,   { ContentItem, Acc }
+    % logger:notice(#{ a => iterate_item_rows, content_item => ContentItem})
+    { ContentItem, Acc }
 .
 % }}-
 
@@ -365,8 +373,8 @@ collect_link_ids
 , #{ links := Links } = Acc
 )
 -> % {{-
-    logger:notice(#{ a => collect_link_ids, content_item => ContentItem, link_id => LinkID, links => Links })
-,   SanitizedItem =
+    % logger:notice(#{ a => collect_link_ids, content_item => ContentItem, link_id => LinkID, links => Links })
+    SanitizedItem =
         maps:remove(link_id, ContentItem)
 
 ,   NewLinks =
@@ -436,9 +444,9 @@ expand_link_tos
 )
 -> % {{-
 
-    logger:notice(#{ a => expand_link_tos, content_item => ContentItem, linked_item => maps:get(LinkID, Links, undefined) })
+    % logger:notice(#{ a => expand_link_tos, content_item => ContentItem, linked_item => maps:get(LinkID, Links, undefined) })
 
-,   case maps:get(LinkID, Links, undefined) of
+    case maps:get(LinkID, Links, undefined) of
 
         undefined ->
             { ContentItem
@@ -455,8 +463,8 @@ expand_link_tos
 
 sub_items({ sub_items, SubItems }, RowCallbacks, ContentItem, Acc) -> % {{-
 
-    logger:notice(#{ a => sub_items, content_item => ContentItem })
-,   { NewSubItems
+    % logger:notice(#{ a => sub_items, content_item => ContentItem })
+    { NewSubItems
     , NewAcc
     } =
         do_subitems(SubItems, RowCallbacks, [], Acc)
@@ -469,8 +477,8 @@ sub_items({ sub_items, SubItems }, RowCallbacks, ContentItem, Acc) -> % {{-
 
 do_subitems([ContentItem|RestItems], RowCallbacks, SubItemAcc, Acc) ->
 
-    logger:notice(#{ a => do_subitems, content_item => ContentItem, acc => Acc, subitem_acc => SubItemAcc })
-,   { NewContentItem
+    % logger:notice(#{ a => do_subitems, content_item => ContentItem, acc => Acc, subitem_acc => SubItemAcc })
+    { NewContentItem
     , NewAcc
     } =
         do_item(RowCallbacks, { ContentItem, Acc })
@@ -484,8 +492,8 @@ do_subitems([ContentItem|RestItems], RowCallbacks, SubItemAcc, Acc) ->
 ;
 
 do_subitems([], _RowCallback, SubItemAcc, #{} = Acc) ->
-    logger:notice(#{ a => do_subitems, acc => Acc, subitem_acc => SubItemAcc })
-,   { lists:reverse(SubItemAcc)
+    % logger:notice(#{ a => do_subitems, acc => Acc, subitem_acc => SubItemAcc })
+    { lists:reverse(SubItemAcc)
     , Acc
     }
 .
@@ -588,6 +596,7 @@ testguide() ->
                  [ #{ link_to => "week-29" }
                  , #{ link_to => "week-30" }
                  , #{ link_to => "raleys"  }
+                 , #{ link_to => "norcal"  }
                  ]
                }
             ]
