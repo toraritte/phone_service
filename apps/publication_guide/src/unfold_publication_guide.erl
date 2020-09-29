@@ -73,13 +73,23 @@
 % -spec do( publication_guide() ) -> resolved_item().
 do(#{} = PublicationGuide) ->
 
-    FirstRun =
+    % `sub_items/4`  is  responsible to  drive  recursion,
+    % and  decided to  always add  it explicitly  to avoid
+    % surprises. It is depth first.
+
+    PhaseOneCallbacks =
         [ { sub_items, fun sub_items/4 }
-        , { query,   fun collect_queries/4 }
+        , { query,   fun send_queries/4 }
         % These are mutually exclusive.
         , { link_id, fun collect_link_ids/4 }
         , { link_to, fun expand_link_tos/4 }
         ]
+
+,    Acc =
+        #{ links    => #{}
+         , link_found => false
+         , queries  => #{}
+         }
 
 ,   SecondRun =
         [ { sub_items, fun sub_items/4 }
@@ -89,12 +99,22 @@ do(#{} = PublicationGuide) ->
 
 ,   futil:pipe(
       [ { PublicationGuide
-        , #{ links    => #{}
-           , queries  => #{}
-           } % = Acc
+        , Acc
         }
       , fun(X) -> logger:notice(#{ a => "run ONE"}), X end
-      , (futil:curry(fun do_item/2))(FirstRun)
+      , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
+      , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
+      , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
+      , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
+      , fun({P,_}) ->
+                R = io_lib:format("~p",[P]),
+                S = lists:flatten(R),
+                length(string:split(S, "link_to")) =:= 1
+        end
+
+      % , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
+      % , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
+      % , (futil:curry(fun clear_links/2))(PhaseOneCallbacks)
       % , fun(X) -> logger:notice(#{ a => "run TWO"}), X end
       % , (futil:curry(fun do_item/2))(SecondRun)
       % , fun(X) -> logger:notice(#{ a => "run THREE"}), X end
@@ -102,6 +122,40 @@ do(#{} = PublicationGuide) ->
       ])
 .
 
+% c("apps/publication_guide/src/unfold_publication_guide.erl"), f(), A =  unfold_publication_guide:do(unfold_publication_guide:testguide()), A.
+
+% clear_links
+% ( PhaseOneCallbacks
+% , { PublicationGuide
+%   , Acc }
+% )
+% ->
+%     clear_links(P, T, { link_found, )
+% ;
+
+% clear_links
+% ( PhaseOneCallbacks
+% , { PublicationGuide, Acc }
+% )
+% ->
+%     NewLinks =
+%         maps:map
+%           ( fun( _CallbackKey, ContentItem ) ->
+%                 futil:pipe(
+%                   [ { ContentItem
+%                     , Acc
+%                     }
+%                   , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
+%                   , (futil:curry(fun erlang:element/2))(1)
+%                   ])
+%             end
+%           , Links
+%           )
+
+% ,   { PublicationGuide
+%     , Acc#{ links => NewLinks }
+%     }
+% .
 % I wonder how this would have been done in Haskell or
 % PureScript  because  there is  definitely  something
 % monadic going on
@@ -252,7 +306,7 @@ iterate_item_rows % {{-
 % of  publications would  make their  order undefined,
 % and  that is  something  listeners rely  on, but  it
 % could not be guaranteed among restarts.)
-collect_queries
+send_queries
 ( { query, _ } = Query
 , _RowCallbacks
 , ContentItem
@@ -383,11 +437,18 @@ expand_link_tos
 -> % {{-
 
     logger:notice(#{ a => expand_link_tos, content_item => ContentItem, linked_item => maps:get(LinkID, Links, undefined) })
+
 ,   case maps:get(LinkID, Links, undefined) of
+
         undefined ->
-            { ContentItem, Acc }
+            { ContentItem
+            , Acc
+            }
+
     ;   LinkedItem ->
-            { LinkedItem, Acc }
+            { LinkedItem
+            , Acc
+            }
     end
 .
 % }}-
@@ -439,6 +500,31 @@ testguide() ->
        , #{ link_to => "drugs" }
        , #{ link_to => "safeway" }
        , #{ link_to => "week-30" }
+       , #{ link_to => "norcal" }
+       , #{ type => category
+          , title =>  "Northern California newspapers and magazines"
+          , link_id => "norcal"
+          , sub_items =>
+            [ #{ type => category
+               , title => "AAA"
+               , sub_items =>
+                 [ #{ link_to => "safeway"}
+                 , #{ type => category
+                    , title => "BBB"
+                    , sub_items =>
+                      [ #{ link_to => "raleys" }
+                      , #{ type => category
+                         , title => "CCC"
+                         , sub_items =>
+                           [ #{ link_to => "drugs" }
+                           ]
+                         }
+                      ]
+                    }
+                 ]
+               }
+            ]
+          }
        , #{ type => category
           , title =>  "Store sales advertising"
           , sub_items =>
@@ -460,7 +546,8 @@ testguide() ->
                          , query => #{ publication => safeway, issue => "week-30" }
                          }
                       , #{ link_to => "raleys" }
-                      , #{ link_to => "drugs" }
+                      % Will never resolve; "drugs" has a link to "safeway" (i.e., this item), making them mutually recursive
+                      % , #{ link_to => "drugs" }
                       ]
                     }
                  , #{ type => publication
@@ -500,14 +587,9 @@ testguide() ->
                , sub_items =>
                  [ #{ link_to => "week-29" }
                  , #{ link_to => "week-30" }
+                 , #{ link_to => "raleys"  }
                  ]
                }
-            ]
-          }
-       , #{ type => category
-          , title =>  "Northern California newspapers and magazines"
-          , sub_items =>
-            [
             ]
           }
        , #{ link_to => "week-29" }
