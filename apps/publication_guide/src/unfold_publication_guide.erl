@@ -88,11 +88,11 @@ do(#{} = PublicationGuide) ->
 ,   ClearLinks =
         proplists:delete(query, SendQueriesAndCollectLinkIDs)
 
-% ,   SecondRun =
-%         [ { sub_items, fun sub_items/4 }
-%         , { link_to, fun expand/4 }
-%         , { query,   fun expand/4 }
-%         ]
+,   CollectQueryResults =
+        [ { sub_items, fun sub_items/4 }
+        , { link_to, fun collect_query_results/4 }
+        % , { query,   fun expand/4 }
+        ]
 
 ,   Acc =
         #{ links    => #{}
@@ -104,18 +104,8 @@ do(#{} = PublicationGuide) ->
       [ { PublicationGuide
         , Acc
         }
-      % , fun(X) -> logger:notice(#{ a => "run ONE"}), X end
       , (futil:curry(fun do_item/2))(SendQueriesAndCollectLinkIDs)
       , (futil:curry(fun clear_links/2))(ClearLinks)
-      % , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
-      % , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
-      % , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
-      % , (futil:curry(fun do_item/2))(PhaseOneCallbacks)
-      % , (futil:curry(fun clear_links/2))(PhaseOneCallbacks)
-      % , fun(X) -> logger:notice(#{ a => "run TWO"}), X end
-      % , (futil:curry(fun do_item/2))(SecondRun)
-      % , fun(X) -> logger:notice(#{ a => "run THREE"}), X end
-      % , (futil:curry(fun do_item/2))(SecondRun)
       ])
 .
 
@@ -135,9 +125,7 @@ clear_links
           , fun erlang:length/1
           , (futil:curry(fun erlang:'=:='/2))(1)
           ])
-    % R = io_lib:format("~p",[P]),
-    % S = lists:flatten(R),
-    % length(string:split(S, "link_to")) =:= 1
+
 ,   clear_links(R, T, { all_links_resolved, AreResolved })
 .
 
@@ -331,7 +319,7 @@ send_queries
     % Path = URL | FilesystemPath
 
     % As established  in the  NOTE, the query  results are
-    % always  articles,  hence  they  hava  an  associated
+    % always  articles,  hence  they  have  an  associated
     % publication  (or should.  By an  arbitrary decision,
     % saving the  publication of the first  one, that will
     % be  used  as the  title  of  the content  item  that
