@@ -30,9 +30,14 @@
 % different publications, it is obviously more prudent
 % to  provide  the  title  in the  content  item  when
 % drawing up the publication guide. )
+%
+% TODO return should be `list( article() )`
+%      (where to define article()?)
 -callback query( map() ) -> list( map() ).
+%                                        URL/PATH
+-callback add_recording( map() ) -> {ok, term()} | {error, term()}
+% -callback dump() -> list( map() ).
 
--callback add_recording( map() ) -> list( map() ).
 
 % -callback create(service_discovery:service()) -> binary() | {error, term()}.
 % -callback read(unicode:unicode_binary()) -> service_discovery:service() | {error, term()}.

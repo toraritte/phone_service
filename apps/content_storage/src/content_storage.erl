@@ -3,7 +3,7 @@
 -behaviour(content_storage).
 
 -export([ configure_storage/1
-        , query/1 
+        , query/1
         ]).
 % -export([configure_storage/1,
 %          create/1,
@@ -18,6 +18,12 @@
 
 configure_storage(StorageMod) ->
     persistent_term:put(?STORAGE_KEY, StorageMod).
+
+query( #{} = Query ) ->
+    ?STORAGE_MOD:query(Query).
+list( map() ).
+add_recording( #{} = Recording ) ->
+    ?STORAGE_MOD:add_recording(Query).
 
 % -spec create(service_discovery:service()) -> binary() | {error, term()}.
 % create(Service) ->

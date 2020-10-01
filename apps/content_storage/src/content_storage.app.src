@@ -11,6 +11,7 @@
     , [ kernel
       , stdlib
       % To be able to refer to type specs defined there for `-callback`s
+      % TODO specs should probably be in phone_service instead
       % , publication_guide
       ]
     }
